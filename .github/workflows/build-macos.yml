@@ -1,0 +1,82 @@
+# 云端自动打包 Mac 安装包（苹果 M 系列芯片）。打完自动上传到你的 R2 发布桶。
+# 触发方式：GitHub 网页上手动点「Run workflow」。
+name: 打包 Mac 安装包
+
+on:
+  workflow_dispatch: {}
+
+env:
+  R2_ENDPOINT: https://0f98b7eaabb1ca07dadca32e7e34ddb0.r2.cloudflarestorage.com
+  PUBLIC_BASE: https://pub-ec88f35bbc9845e098c534da6f88fdfc.r2.dev
+  AWS_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: auto
+  CODEX_NPM_VERSION: 0.144.5
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: 准备 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 下载官方 Codex 引擎（Mac 版，与 Windows 同一锁定版本）
+        run: |
+          set -euo pipefail
+          curl -fsSL -o codex-darwin.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_NPM_VERSION}-darwin-arm64.tgz"
+          shasum -a 256 codex-darwin.tgz
+          tar -xzf codex-darwin.tgz
+          VENDOR="package/vendor/aarch64-apple-darwin"
+          test -f "$VENDOR/bin/codex"
+          install -m 755 "$VENDOR/bin/codex" src-tauri/resources/codex-runtime/codex
+          if [ -f "$VENDOR/path/rg" ]; then
+            mkdir -p src-tauri/resources/codex-runtime/codex-path
+            install -m 755 "$VENDOR/path/rg" src-tauri/resources/codex-runtime/codex-path/rg
+            install -m 755 "$VENDOR/path/rg" src-tauri/resources/codex-runtime/rg
+          fi
+          src-tauri/resources/codex-runtime/codex --version
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 打包安装包
+        env:
+          BSAIGC_INTERNAL_API_KEY: ${{ secrets.BSAIGC_INTERNAL_API_KEY }}
+        run: pnpm tauri build --bundles dmg
+
+      - name: 读取版本号
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: 上传安装包与版本信息到 R2
+        run: |
+          set -euo pipefail
+          command -v aws >/dev/null 2>&1 || brew install awscli
+          aws configure set default.s3.addressing_style path
+          VER="${{ steps.ver.outputs.version }}"
+          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
+          NAME="banshan-workbench-${VER}-mac.dmg"
+          aws s3 cp "$DMG" "s3://banshan-releases/$NAME" --endpoint-url "$R2_ENDPOINT"
+          printf '{"version":"%s","url":"%s/%s","notes":"Mac 版 %s"}\n' "$VER" "$PUBLIC_BASE" "$NAME" "$VER" > version-mac.json
+          aws s3 cp version-mac.json "s3://banshan-releases/version-mac.json" --endpoint-url "$R2_ENDPOINT" --content-type application/json
+
+      - name: 留存安装包（可在 GitHub 网页下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: banshan-workbench-mac
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+
