@@ -8,7 +8,7 @@ use object_store::multipart::MultipartStore;
 use object_store::path::Path as ObjectPath;
 use object_store::{
     Attribute, Attributes, ClientOptions, GetOptions, ObjectStore, PutMultipartOptions, PutOptions,
-    PutResult,
+    ObjectStoreExt, PutResult,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
