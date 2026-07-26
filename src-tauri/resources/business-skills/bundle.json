@@ -1,0 +1,397 @@
+{
+  "schemaVersion": "1.0",
+  "bundleId": "bsaigc-business",
+  "name": "半山商务 Skill Bundle",
+  "version": "1.2.0",
+  "locale": "zh-CN",
+  "description": "覆盖商务文档管线、需求、案件编排、沟通、报价、合同、版本、独立复核、主数据、标书、请款、验收、回款和一致性审计的内置商务技能。",
+  "requiredTools": [
+    "business.approval.request",
+    "business.artifact.compare",
+    "business.artifact.create",
+    "business.artifact.read",
+    "business.calculation",
+    "business.document.extract",
+    "business.document.generate",
+    "business.document.validate",
+    "business.ledger.read",
+    "business.project.read",
+    "business.project.write",
+    "business.source.locate",
+    "business.task.plan",
+    "business.template.read"
+  ],
+  "skills": [
+    {
+      "id": "business-document-pipeline",
+      "version": "1.0.0",
+      "manifest": "business-document-pipeline/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.document.extract",
+        "business.document.generate",
+        "business.document.validate",
+        "business.source.locate",
+        "business.template.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "business-brief-intake",
+      "version": "1.0.0",
+      "manifest": "business-brief-intake/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.document.extract",
+        "business.source.locate",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "business-case-orchestrator",
+      "version": "1.0.0",
+      "manifest": "business-case-orchestrator/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.artifact.read",
+        "business.ledger.read",
+        "business.artifact.create",
+        "business.approval.request",
+        "business.task.plan"
+      ]
+    },
+    {
+      "id": "business-communication-drafter",
+      "version": "1.0.0",
+      "manifest": "business-communication-drafter/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.artifact.read",
+        "business.source.locate",
+        "business.template.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "quotation-builder",
+      "version": "1.0.0",
+      "manifest": "quotation-builder/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.template.read",
+        "business.calculation",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "contract-review",
+      "version": "1.0.0",
+      "manifest": "contract-review/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.document.extract",
+        "business.source.locate",
+        "business.project.read",
+        "business.artifact.compare",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "contract-version-compare",
+      "version": "1.0.0",
+      "manifest": "contract-version-compare/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.document.extract",
+        "business.source.locate",
+        "business.artifact.compare",
+        "business.project.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "business-review-board",
+      "version": "1.0.0",
+      "manifest": "business-review-board/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.ledger.read",
+        "business.artifact.read",
+        "business.artifact.compare",
+        "business.source.locate",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "project-master-data",
+      "version": "1.0.0",
+      "manifest": "project-master-data/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.artifact.read",
+        "business.source.locate",
+        "business.project.read",
+        "business.project.write",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "tender-checklist",
+      "version": "1.0.0",
+      "manifest": "tender-checklist/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.document.extract",
+        "business.source.locate",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "payment-request-pack",
+      "version": "1.0.0",
+      "manifest": "payment-request-pack/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.ledger.read",
+        "business.calculation",
+        "business.template.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "acceptance-pack",
+      "version": "1.0.0",
+      "manifest": "acceptance-pack/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.artifact.read",
+        "business.source.locate",
+        "business.template.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "receivables-followup",
+      "version": "1.0.0",
+      "manifest": "receivables-followup/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.project.read",
+        "business.ledger.read",
+        "business.calculation",
+        "business.template.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    },
+    {
+      "id": "business-consistency-audit",
+      "version": "1.0.0",
+      "manifest": "business-consistency-audit/manifest.json",
+      "enabledByDefault": true,
+      "requiredTools": [
+        "business.artifact.read",
+        "business.artifact.compare",
+        "business.source.locate",
+        "business.project.read",
+        "business.artifact.create",
+        "business.approval.request"
+      ]
+    }
+  ],
+  "minimumCodexVersion": "0.144.5",
+  "versionAuthority": "bundle.json",
+  "files": [
+    {
+      "path": "_shared/checklists/contract-review.md",
+      "bytes": 921,
+      "sha256": "0a2728f899fde0a1510810ad79b153726f36bbea8958c8fb2e1161c930168105"
+    },
+    {
+      "path": "_shared/checklists/payment-acceptance.md",
+      "bytes": 558,
+      "sha256": "a7e3e9e1226665d5295812950a13287744bc2f387f2046eed5f995a936f7fd62"
+    },
+    {
+      "path": "_shared/checklists/tender-submission.md",
+      "bytes": 792,
+      "sha256": "226b74ec2871494b3a1fb0b2ccda60e4ec547595515a352df9b788c3c5878c3c"
+    },
+    {
+      "path": "_shared/clause-library/contract-clause-reference.md",
+      "bytes": 1083,
+      "sha256": "5fa1d16aa05945c96e480a6d30c30f476f2190c36de7625a3e4d70c7436e0280"
+    },
+    {
+      "path": "_shared/consistency-fields/business-consistency-fields.md",
+      "bytes": 992,
+      "sha256": "80aa228210cbcab536fa6865736c4a3891078f9ea3794fda2e239ade5888cd8b"
+    },
+    {
+      "path": "_shared/schemas/artifact-envelope.schema.json",
+      "bytes": 2198,
+      "sha256": "2026eb51e8c15a74bb29ecc025d0baa08d36cd5edbc1a975f49c1a22de26709e"
+    },
+    {
+      "path": "_shared/schemas/project-master-data.schema.json",
+      "bytes": 5022,
+      "sha256": "d04a99afe7e283a18c14a2b7a7dbc1e479df6c958b954c188b15417d502185de"
+    },
+    {
+      "path": "acceptance-pack/manifest.json",
+      "bytes": 1221,
+      "sha256": "e18b5889f9b852ef01f95e2ec2a673e4acedefcb8f0f8e262b3440bc32f33bcc"
+    },
+    {
+      "path": "acceptance-pack/SKILL.md",
+      "bytes": 1587,
+      "sha256": "b697f1b26fa83b4eff82355addfba5f412d4fc029274aed5a6cb22128cd54bc0"
+    },
+    {
+      "path": "business-brief-intake/manifest.json",
+      "bytes": 1178,
+      "sha256": "97eda4d6b5f846cf1411afc598fc6d2ec29439916c7a8bf027e8d2addbd3c864"
+    },
+    {
+      "path": "business-brief-intake/SKILL.md",
+      "bytes": 1620,
+      "sha256": "fa965480249b8e72436af187819328120ec19a0fb0b565b73fa2e2f521901c8d"
+    },
+    {
+      "path": "business-case-orchestrator/manifest.json",
+      "bytes": 1530,
+      "sha256": "229c9bcc78dd157e9d1b35a8c28e37ff9b243af11f372cade28843be623d04c6"
+    },
+    {
+      "path": "business-case-orchestrator/SKILL.md",
+      "bytes": 2159,
+      "sha256": "1fcc81deaf9c9b4d911dffddf047e67afe8711fbf1e22369d1523d46dcd6b211"
+    },
+    {
+      "path": "business-communication-drafter/manifest.json",
+      "bytes": 1326,
+      "sha256": "670d9f95e29208b9b7f1ed69de2593729e78388c01989f46c6a412b720715055"
+    },
+    {
+      "path": "business-communication-drafter/SKILL.md",
+      "bytes": 1836,
+      "sha256": "321844ef73c0d9350c6b4ba0ada7f6c61ace87e474a0c42e3b0096d5069a9169"
+    },
+    {
+      "path": "business-consistency-audit/manifest.json",
+      "bytes": 1272,
+      "sha256": "383db8d3e3682f66090a11acd7349348eee41a9303d54dd3daddd043b85850d0"
+    },
+    {
+      "path": "business-consistency-audit/SKILL.md",
+      "bytes": 1747,
+      "sha256": "d094f64c50e22b8ed59c32b2765dccf3c5870f10a9b46aa0f98632478e7523bc"
+    },
+    {
+      "path": "business-document-pipeline/manifest.json",
+      "bytes": 1592,
+      "sha256": "99833cf817edc9b5ea875b1dcb41d6bfcb0a43c9134b9a6f454d3a103d9f7022"
+    },
+    {
+      "path": "business-document-pipeline/SKILL.md",
+      "bytes": 2393,
+      "sha256": "ee1b103b09d6564df1ee11a717762b008417ae26412ed44625cff5b6a22c75e4"
+    },
+    {
+      "path": "business-review-board/manifest.json",
+      "bytes": 1511,
+      "sha256": "c3c4140f2309b5ac46feb1b7af0d3c09f82b1cbd2981c8e71c49ab12d5c74e70"
+    },
+    {
+      "path": "business-review-board/SKILL.md",
+      "bytes": 2163,
+      "sha256": "c82474d0b3ef7a740860337def9da85d8d93ea73e7254475b2ade25dd5658e46"
+    },
+    {
+      "path": "contract-review/manifest.json",
+      "bytes": 1380,
+      "sha256": "36f6a97e7d4170ab2b63346bed3967711e2a5f2ae452c3e9deee6bb45b041409"
+    },
+    {
+      "path": "contract-review/SKILL.md",
+      "bytes": 1793,
+      "sha256": "ac62531ed802dde93d83ec925b9b182408842e196732eaec64637c633a91e920"
+    },
+    {
+      "path": "contract-version-compare/manifest.json",
+      "bytes": 1345,
+      "sha256": "e5d96264e3b343cbfc8787889ff0caff3a802cf2c38a6e3b508d4bf8af183657"
+    },
+    {
+      "path": "contract-version-compare/SKILL.md",
+      "bytes": 1769,
+      "sha256": "bdb3e5acdee3ea5c0ea730377e103fdaf5a91f9e622e3511403c0d21c1213981"
+    },
+    {
+      "path": "payment-request-pack/manifest.json",
+      "bytes": 1250,
+      "sha256": "c76b84e9d72bc8264184299a220924ae9510c38862117229c8e262cb94274cf0"
+    },
+    {
+      "path": "payment-request-pack/SKILL.md",
+      "bytes": 1614,
+      "sha256": "e99efba2000de63126e0fc7d5f7a3af5caa4791f41ff964b8c0b1ad86a714b39"
+    },
+    {
+      "path": "project-master-data/manifest.json",
+      "bytes": 1239,
+      "sha256": "78048e25918613597dfcd5890c4677c0fe4c39e8063635665bda76640caea7f8"
+    },
+    {
+      "path": "project-master-data/SKILL.md",
+      "bytes": 1626,
+      "sha256": "bdfce46c82fe26f51353c89961c6041bf50f92965a74e29eddb18ef723f2685b"
+    },
+    {
+      "path": "quotation-builder/manifest.json",
+      "bytes": 1205,
+      "sha256": "67c6cb156ef5c0328d2cf94931a10a413b7ff180d9dda45b8ba594e31c29186f"
+    },
+    {
+      "path": "quotation-builder/SKILL.md",
+      "bytes": 1606,
+      "sha256": "3c3950ece73839a95d39b599eca810e93df15204a0f3442d50e2c1f93dbebee1"
+    },
+    {
+      "path": "receivables-followup/manifest.json",
+      "bytes": 1398,
+      "sha256": "1a93af3e96e9e9b3d1af64c868f834935a2a484c92812df677abb9b7ef318bdd"
+    },
+    {
+      "path": "receivables-followup/SKILL.md",
+      "bytes": 1933,
+      "sha256": "fbd418522ed8840473ebb3ac619de031d01a4d9afa8c19aa81f3a618d4589164"
+    },
+    {
+      "path": "tender-checklist/manifest.json",
+      "bytes": 1164,
+      "sha256": "3b3b37608bd18b947113eac3061e75d1dcf099e040a43fc4b749163a6b9c41ed"
+    },
+    {
+      "path": "tender-checklist/SKILL.md",
+      "bytes": 1606,
+      "sha256": "da14db5b59640244b4a9cf91649944bf633c07c571a70edb2927ddb76347626e"
+    }
+  ]
+}

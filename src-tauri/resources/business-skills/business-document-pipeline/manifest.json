@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "id": "business-document-pipeline",
+  "displayName": "商务文档生产管线",
+  "version": "1.0.0",
+  "description": "处理 PDF、DOCX、XLSX、图片和纯文本商务资料，完成识别、提取、OCR/表格降级、来源定位、字段归一、模板生成、渲染检查和最终 Artifact 交付。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "收到合同、报价单、招标文件、请款、验收或客户附件",
+    "需要读取或生成 PDF、DOCX、XLSX 商务文件",
+    "文档存在扫描页、跨页表格、模板格式或输出 QA 要求",
+    "下游 Skill 需要统一且可追溯的文档输入输出"
+  ],
+  "requiredTools": [
+    "business.document.extract",
+    "business.document.generate",
+    "business.document.validate",
+    "business.source.locate",
+    "business.template.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "document.read:business",
+    "document.generate:draft",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.document.intake-summary",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.document.structured-extraction",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.document.generated-draft",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.document.qa-report",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

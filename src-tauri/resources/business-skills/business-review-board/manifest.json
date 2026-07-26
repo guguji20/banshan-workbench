@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0",
+  "id": "business-review-board",
+  "displayName": "商务独立复核",
+  "version": "1.0.0",
+  "description": "对高风险合同、报价、标书、请款、验收和对外材料做独立的商务、财务、交付、风险与一致性复核，输出分歧和最终人工审批清单。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "大金额、年框、客户版或复杂付款合同",
+    "标书、报价、请款或验收材料即将对外发送",
+    "同一结果需要独立找遗漏和错误假设",
+    "金额、交付、风险或一致性存在高风险差异"
+  ],
+  "requiredTools": [
+    "business.project.read",
+    "business.ledger.read",
+    "business.artifact.read",
+    "business.artifact.compare",
+    "business.source.locate",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "ledger.read",
+    "artifact.read",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.review.board-findings",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.review.disagreements",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.review.outbound-checklist",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.review.decision-pack",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

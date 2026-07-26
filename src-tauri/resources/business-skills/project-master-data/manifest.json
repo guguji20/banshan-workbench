@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "id": "project-master-data",
+  "displayName": "项目主数据抽取",
+  "version": "1.0.0",
+  "description": "从已确认 Brief、报价和合同中抽取并维护唯一项目主档，供请款、验收和一致性审计复用。用于项目立项、合同确认后建档或主数据变更。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "项目首次建档",
+    "合同或报价确认后同步主数据",
+    "客户、金额、交付或付款节点变化",
+    "下游材料需要统一数据源"
+  ],
+  "requiredTools": [
+    "business.artifact.read",
+    "business.source.locate",
+    "business.project.read",
+    "business.project.write",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "project.write:approved",
+    "artifact.read",
+    "audit.write"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.project-master.preview",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.project-master.change-set",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.project-master.revision",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

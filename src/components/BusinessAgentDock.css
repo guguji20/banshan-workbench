@@ -1,0 +1,87 @@
+/* Business agent dock: role chips + one-click office skills above the AI stage. */
+.business-agent-dock {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 0;
+  border-bottom: 1px solid var(--bw-border, rgba(33, 51, 46, 0.12));
+  background: color-mix(in srgb, var(--bw-panel, #fff) 72%, var(--bw-app, #f7f8f6) 28%);
+}
+.business-agent-dock__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+}
+.business-agent-dock__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  color: var(--bw-text-3, #6c7a75);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.business-agent-dock__label svg {
+  color: var(--bw-accent, #0f766e);
+}
+.business-agent-dock__row > button {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--bw-border, rgba(33, 51, 46, 0.12));
+  border-radius: 999px;
+  color: var(--bw-text-2, #3c4d47);
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+.business-agent-dock__row > button:hover {
+  color: var(--bw-text, #21332e);
+  border-color: var(--bw-accent, #0f766e);
+  background: #fff;
+}
+.business-agent-dock__row > button.is-active {
+  color: #fff;
+  border-color: var(--bw-accent, #0f766e);
+  background: var(--bw-accent, #0f766e);
+  box-shadow: 0 4px 12px rgba(15, 118, 110, 0.22);
+}
+.business-agent-dock__skills {
+  display: grid;
+  gap: 7px;
+  padding: 0 14px 10px;
+}
+.business-agent-dock__skills > small {
+  color: var(--bw-text-3, #6c7a75);
+  font-size: 10.5px;
+}
+.business-agent-dock__skill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.business-agent-dock__skill-row > button {
+  min-height: 27px;
+  padding: 0 10px;
+  border: 1px dashed color-mix(in srgb, var(--bw-accent, #0f766e) 45%, transparent 55%);
+  border-radius: 7px;
+  color: var(--bw-accent-hover, #0c5f59);
+  background: var(--bw-active, rgba(15, 118, 110, 0.08));
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.business-agent-dock__skill-row > button:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--bw-accent, #0f766e);
+  background: var(--bw-active-strong, rgba(15, 118, 110, 0.15));
+}
+.business-agent-dock__skill-row > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

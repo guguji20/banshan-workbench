@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0",
+  "id": "tender-checklist",
+  "displayName": "标书拆解",
+  "version": "1.0.0",
+  "description": "把采购文件或招标文件拆成可核对的资格、材料、报价、签章、时间和提交 Checklist，并保留原文定位。用于投标准备、材料收集和提交前复核。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "收到招标/采购文件",
+    "需要快速找必交材料",
+    "投标文件准备或提交前复核",
+    "采购文件出现补遗或变更"
+  ],
+  "requiredTools": [
+    "business.document.extract",
+    "business.source.locate",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "document.read:tender",
+    "artifact.write:draft",
+    "project.read"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.tender.checklist",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.tender.risk-items",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.tender.final-review",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "id": "payment-request-pack",
+  "displayName": "请款材料生成",
+  "version": "1.0.0",
+  "description": "引用项目主档和合同付款节点生成请款申请、金额核对和附件清单。用于首款、进度款、尾款或补充请款材料准备。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "达到合同付款节点",
+    "需要生成请款申请或开票信息",
+    "客户要求补充请款附件",
+    "核对累计请款与剩余金额"
+  ],
+  "requiredTools": [
+    "business.project.read",
+    "business.ledger.read",
+    "business.calculation",
+    "business.template.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "finance.read",
+    "template.read:payment",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.payment-request.draft",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.payment-request.reconciliation",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.payment-request.attachment-checklist",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

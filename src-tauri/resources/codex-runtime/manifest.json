@@ -1,0 +1,86 @@
+{
+    "schemaVersion":  1,
+    "name":  "OpenAI Codex CLI sidecar",
+    "version":  "0.144.5",
+    "cliVersionOutput":  "codex-cli 0.144.5",
+    "target":  "x86_64-pc-windows-msvc",
+    "entrypoint":  "codex.exe",
+    "layout":  "bsaigc-tauri-resource-v1",
+    "source":  {
+                   "repository":  "https://github.com/openai/codex",
+                   "releaseTag":  "rust-v0.144.5",
+                   "npmPackage":  "@openai/codex",
+                   "npmPlatformVersion":  "0.144.5-win32-x64",
+                   "npmRegistry":  "https://registry.npmjs.org/",
+                   "npmTarball":  "https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-win32-x64.tgz",
+                   "npmTarballSha1":  "b9d63532a8cb0e113625c3c9ed0f14b669f50e87",
+                   "npmTarballIntegrity":  "sha512-DnsSTlnnzleTxvLwIGnBitKInscxn2I7qASqosS8Fv+qysBygd+ZiBn/SQsRCgQ28PAlsNzmd3Gf3ZTecolAmg=="
+               },
+    "authenticode":  {
+                         "signerSubject":  "CN=\"OpenAI OpCo, LLC\", O=\"OpenAI OpCo, LLC\", L=San Francisco, S=California, C=US",
+                         "signerThumbprint":  "838CD705CC1344F84DAF4A7479BD532445B3ABED"
+                     },
+    "license":  {
+                    "expression":  "Apache-2.0",
+                    "licenseFile":  "LICENSE",
+                    "noticeFile":  "NOTICE"
+                },
+    "files":  [
+                  {
+                      "path":  "codex.exe",
+                      "sourcePath":  "bin/codex.exe",
+                      "role":  "app-server entrypoint",
+                      "sizeBytes":  341195568,
+                      "sha256":  "efdb3540ef74b9909408c8d38da79483454797b36f471e3e004fc2bf2b70e22a"
+                  },
+                  {
+                      "path":  "codex-resources/codex-command-runner.exe",
+                      "sourcePath":  "codex-resources/codex-command-runner.exe",
+                      "role":  "Windows sandbox command runner",
+                      "sizeBytes":  1271088,
+                      "sha256":  "61578d088b9ea335c7a66bf4b1b0abe615dd8c2b37dde28b8618084f353989d7"
+                  },
+                  {
+                      "path":  "codex-resources/codex-windows-sandbox-setup.exe",
+                      "sourcePath":  "codex-resources/codex-windows-sandbox-setup.exe",
+                      "role":  "Windows sandbox setup helper",
+                      "sizeBytes":  8817456,
+                      "sha256":  "26d484975fca809537bf279de0330bb756047b0b3645c65b5b46930970ae1dff"
+                  },
+                  {
+                      "path":  "codex-path/rg.exe",
+                      "sourcePath":  "codex-path/rg.exe",
+                      "role":  "official package search helper",
+                      "sizeBytes":  4266496,
+                      "sha256":  "decdd4992f3f1b9a5ef9898f1b40ab16886d579d6516b4efd3d5eaa19364e408"
+                  },
+                  {
+                      "path":  "rg.exe",
+                      "sourcePath":  "codex-path/rg.exe",
+                      "role":  "sidecar-adjacent search helper",
+                      "sizeBytes":  4266496,
+                      "sha256":  "decdd4992f3f1b9a5ef9898f1b40ab16886d579d6516b4efd3d5eaa19364e408"
+                  },
+                  {
+                      "path":  "codex-package.json",
+                      "sourcePath":  "codex-package.json",
+                      "role":  "official package layout metadata",
+                      "sizeBytes":  215,
+                      "sha256":  "b4bce9027f4cf61aa020d5080a33a7d381cee081580728676b02ed367b2bed3b"
+                  },
+                  {
+                      "path":  "LICENSE",
+                      "sourcePath":  "vendor/openai-codex/rust-v0.144.5/LICENSE",
+                      "role":  "Apache-2.0 license",
+                      "sizeBytes":  10926,
+                      "sha256":  "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+                  },
+                  {
+                      "path":  "NOTICE",
+                      "sourcePath":  "vendor/openai-codex/rust-v0.144.5/NOTICE",
+                      "role":  "OpenAI Codex notice",
+                      "sizeBytes":  242,
+                      "sha256":  "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+                  }
+              ]
+}

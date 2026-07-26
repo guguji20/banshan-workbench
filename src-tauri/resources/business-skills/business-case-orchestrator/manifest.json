@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0",
+  "id": "business-case-orchestrator",
+  "displayName": "商务案件编排",
+  "version": "1.0.0",
+  "description": "识别商务案件阶段，把复杂事项拆成按依赖排序的短任务、检查点、负责人、输入输出、审批节点和恢复点，复用统一 Task、Artifact 与 Ledger。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "一个商务事项横跨需求、报价、合同、请款、验收或回款",
+    "需要安排多人交接、依赖、截止时间和审批顺序",
+    "需要把聊天目标转成可执行、可暂停、可恢复的闭环",
+    "当前案件卡住，需要定位阻断项和下一步"
+  ],
+  "requiredTools": [
+    "business.project.read",
+    "business.artifact.read",
+    "business.ledger.read",
+    "business.artifact.create",
+    "business.approval.request",
+    "business.task.plan"
+  ],
+  "permissions": [
+    "project.read",
+    "artifact.read",
+    "artifact.write:draft",
+    "ledger.read",
+    "task.submit"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.case.execution-plan",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.case.stage-status",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.case.blockers",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.case.handoff",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

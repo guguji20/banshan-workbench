@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "半山商务工作台",
+  "version": "1.3.0",
+  "identifier": "com.banshan.aigc.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "半山商务工作台",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1120,
+        "minHeight": 720
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/media-runtime/*",
+      "resources/codex-runtime/",
+      "resources/business-skills/**/*",
+      "resources/business-prompts/*",
+      "resources/third-party/*",
+      "resources/r2.config.json"
+    ],
+    "publisher": "Banshan AIGC",
+    "copyright": "Copyright © 2026 Banshan AIGC",
+    "shortDescription": "客户、需求、报价、合同审查、请款、验收、回款与归档的一体化本地商务工作台",
+    "longDescription": "半山商务工作台是一套本地优先的 Windows 商务工作系统，覆盖项目与客户资料、需求确认、报价、合同导入与审查、Evidence 人工确认、报告、请款、验收、到账回款和台账归档。",
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "半山商务工作台"
+      }
+    },
+    "homepage": null
+  }
+}

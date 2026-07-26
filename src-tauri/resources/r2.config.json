@@ -1,0 +1,8 @@
+{
+  "accountId": "0f98b7eaabb1ca07dadca32e7e34ddb0",
+  "bucket": "banshan-backup",
+  "accessKeyId": "5788af791f435a9d4560ff79cb99cb2e",
+  "secretAccessKey": "e14b29cea36230c749efbeb1a45259c51fbb59adc3c09c877e07455dcc23c26a",
+  "endpoint": "https://0f98b7eaabb1ca07dadca32e7e34ddb0.r2.cloudflarestorage.com",
+  "updateManifestUrl": "https://pub-ec88f35bbc9845e098c534da6f88fdfc.r2.dev/version.json"
+}

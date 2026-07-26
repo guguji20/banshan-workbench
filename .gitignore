@@ -1,0 +1,45 @@
+﻿# Runtime/build output
+node_modules/
+dist/
+dist-ssr/
+src-tauri/target/
+*.local
+*.log
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local runtime authority (never commit user data)
+.runtime/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+vault/
+src-tauri/resources/media-runtime/
+
+# Reproducible upstream working copy and downloaded archive
+upstream/openai-codex/
+upstream/openai-codex-*.zip
+
+# Local secrets
+.env
+.env.*
+!.env.example
+src-tauri/resources/codex-runtime/codex.exe
+
+# 旧版安装包与构建产物（不入库，太大且是产物）
+release/
+*-setup.exe
+
+# 本地操作脚本（含密钥，只在本机用，不入库）
+*.bat

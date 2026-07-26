@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "id": "acceptance-pack",
+  "displayName": "验收材料生成",
+  "version": "1.0.0",
+  "description": "依据合同交付和实际交付记录生成验收单、交付清单、缺失项及签章检查。用于阶段验收、终验和客户补充验收材料。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "项目进入阶段验收或终验",
+    "需要整理交付物清单",
+    "客户要求验收证明",
+    "请款前需要核验验收条件"
+  ],
+  "requiredTools": [
+    "business.project.read",
+    "business.artifact.read",
+    "business.source.locate",
+    "business.template.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "delivery.read",
+    "template.read:acceptance",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.acceptance.draft",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.acceptance.delivery-list",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.acceptance.gap-report",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "id": "contract-version-compare",
+  "displayName": "合同版本对比",
+  "version": "1.0.0",
+  "description": "对比合同初稿、客户修订稿和签署稿，定位新增、删除、金额日期变化及风险变化，输出逐条版本差异和待确认事项。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "客户回传了合同修订版",
+    "签署前需要核对最终版与已审版本",
+    "需要解释两版合同改了什么",
+    "金额、付款、交付、验收或知识产权条款发生变化"
+  ],
+  "requiredTools": [
+    "business.document.extract",
+    "business.source.locate",
+    "business.artifact.compare",
+    "business.project.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "document.read:contract",
+    "project.read",
+    "artifact.read",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.contract.version-diff",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.contract.changed-risks",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.contract.final-checklist",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "id": "business-communication-drafter",
+  "displayName": "商务沟通与追问",
+  "version": "1.0.0",
+  "description": "把模糊需求、合同意见、报价差异、请款验收问题和回款事项整理成可直接确认的追问、回复或内部交接草稿。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "客户反馈模糊或前后矛盾",
+    "需要向客户追问缺失商务信息",
+    "需要把内部判断转成客户可读回复",
+    "需要生成合同意见、请款、验收或回款沟通草稿"
+  ],
+  "requiredTools": [
+    "business.project.read",
+    "business.artifact.read",
+    "business.source.locate",
+    "business.template.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "artifact.read",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.communication.question-list",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.communication.reply-draft",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.communication.internal-handoff",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

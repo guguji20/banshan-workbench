@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bsaigc://business/project-master-data.schema.json",
+  "title": "Business Project Master Data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "projectId",
+    "revision",
+    "projectName",
+    "customer",
+    "commercial",
+    "delivery",
+    "payment",
+    "fieldSources"
+  ],
+  "properties": {
+    "projectId": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "projectName": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "lead",
+        "quoting",
+        "contracting",
+        "active",
+        "acceptance",
+        "closed",
+        "cancelled"
+      ]
+    },
+    "customer": {
+      "type": "object",
+      "required": [
+        "legalName"
+      ],
+      "properties": {
+        "legalName": {
+          "type": "string"
+        },
+        "shortName": {
+          "type": "string"
+        },
+        "contactName": {
+          "type": "string"
+        },
+        "contactMethod": {
+          "type": "string"
+        }
+      }
+    },
+    "commercial": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "type": "string",
+          "default": "CNY"
+        },
+        "amountExcludingTax": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "taxRate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "taxAmount": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "amountIncludingTax": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "quantity": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "unit": {
+                "type": "string"
+              },
+              "specification": {
+                "type": "string"
+              },
+              "dueDate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date"
+              }
+            }
+          }
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "properties": {
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ratio": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "amount": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "trigger": {
+                "type": "string"
+              },
+              "dueDate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date"
+              }
+            }
+          }
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "properties": {
+        "contractNo": {
+          "type": "string"
+        },
+        "signedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "effectiveAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        }
+      }
+    },
+    "fieldSources": {
+      "type": "object",
+      "description": "键为字段路径，值记录来源 Artifact、revision 与定位。",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "artifactId",
+          "revision"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "locator": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "field",
+          "reason"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "candidateValues": {
+            "type": "array"
+          }
+        }
+      }
+    }
+  }
+}

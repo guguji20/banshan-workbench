@@ -1,0 +1,53 @@
+[package]
+name = "bsaigc_desktop"
+version = "1.3.0"
+description = "BSAIGC business workbench desktop"
+authors = ["Banshan AIGC"]
+edition = "2021"
+
+[lib]
+name = "bsaigc_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "=0.39.0", features = ["bundled"] }
+uuid = { version = "1.24.0", features = ["v4", "v5", "serde"] }
+ts-rs = { version = "12.0.1", features = ["serde-json-impl", "uuid-impl"] }
+sha2 = "0.10"
+rfd = "0.15"
+zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+fs2 = "0.4.3"
+pdf-extract = "0.12.0"
+object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+zeroize = "1.9"
+similar = "=2.7.0"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+windows-collections = "0.2.0"
+windows = { version = "0.61.3", features = [
+    "Data_Pdf",
+    "Foundation",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage",
+    "Storage_Streams",
+    "UI",
+    "Win32_Foundation",
+    "Win32_System_WinRT",
+] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0",
+  "id": "business-brief-intake",
+  "displayName": "商务需求整理",
+  "version": "1.0.0",
+  "description": "把客户聊天记录、会议纪要、邮件或需求文档整理成结构化商务 Brief，并识别缺失信息与追问项。用于新商机录入、需求模糊、交接前补全或需求变更复核。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "新客户需求进入",
+    "会议或聊天记录需要整理",
+    "需求信息不完整或前后矛盾",
+    "市场向执行团队交接前"
+  ],
+  "requiredTools": [
+    "business.document.extract",
+    "business.source.locate",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "document.read",
+    "project.read",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.brief.draft",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.brief.questions",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.brief.change-summary",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

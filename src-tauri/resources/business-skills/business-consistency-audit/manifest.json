@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "id": "business-consistency-audit",
+  "displayName": "商务文档一致性审计",
+  "version": "1.0.0",
+  "description": "跨 Brief、报价、合同、项目主档、请款和验收执行字段级一致性审计。用于签约前、请款前、验收前、归档前或任一关键资料变更后。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "关键阶段提交前",
+    "项目资料发生版本变化",
+    "金额、税率、交付或付款信息存在冲突",
+    "需要全链路复核"
+  ],
+  "requiredTools": [
+    "business.artifact.read",
+    "business.artifact.compare",
+    "business.source.locate",
+    "business.project.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "artifact.read",
+    "artifact.write:audit",
+    "audit.write"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.consistency-audit.report",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.consistency-audit.blockers",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.consistency-audit.recheck",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}

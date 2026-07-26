@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "id": "receivables-followup",
+  "displayName": "应收与回款跟进",
+  "version": "1.0.0",
+  "description": "根据合同付款节点、请款记录、验收状态和到账记录生成应收账龄、到期提醒、跟进计划和客户沟通草稿，不自动发送。",
+  "entry": "SKILL.md",
+  "enabledByDefault": true,
+  "triggers": [
+    "需要查看某客户或项目还有多少钱未回",
+    "付款节点即将到期或已经逾期",
+    "需要生成催款计划或沟通草稿",
+    "到账记录与合同、请款或台账不一致"
+  ],
+  "requiredTools": [
+    "business.project.read",
+    "business.ledger.read",
+    "business.calculation",
+    "business.template.read",
+    "business.artifact.create",
+    "business.approval.request"
+  ],
+  "permissions": [
+    "project.read",
+    "ledger.read",
+    "artifact.write:draft"
+  ],
+  "outputArtifacts": [
+    {
+      "type": "business.receivable.summary",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.receivable.aging",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.receivable.followup-plan",
+      "mode": "draft-or-reviewed"
+    },
+    {
+      "type": "business.receivable.reminder-draft",
+      "mode": "draft-or-reviewed"
+    }
+  ],
+  "humanApprovalRequired": true,
+  "source": "bsaigc-business"
+}
