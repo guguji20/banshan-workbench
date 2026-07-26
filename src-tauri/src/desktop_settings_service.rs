@@ -648,10 +648,21 @@ impl DesktopSettingsService {
         if let Ok(value) = std::env::var(UPDATE_SOURCE_ENV) {
             let value = value.trim().to_string();
             if value.starts_with("https://") {
-                return Some(value);
+                return Some(Self::platform_manifest_url(value));
             }
         }
-        crate::r2_backup::load_update_manifest_url()
+        crate::r2_backup::load_update_manifest_url().map(Self::platform_manifest_url)
+    }
+
+    /// Windows 读 version.json;macOS 自动改读同目录的 version-mac.json。
+    /// 两个平台各有一份更新信息,云端打包时互不覆盖。
+    fn platform_manifest_url(url: String) -> String {
+        if cfg!(target_os = "macos") {
+            if let Some(prefix) = url.strip_suffix("version.json") {
+                return format!("{prefix}version-mac.json");
+            }
+        }
+        url
     }
 
     /// Fetches the release manifest and remembers the outcome. Only invoked
