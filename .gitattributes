@@ -14,6 +14,12 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 
+# These files are byte-integrity artifacts; Git must not rewrite or text-diff them.
+src-tauri/resources/codex-runtime/LICENSE binary
+src-tauri/resources/codex-runtime/NOTICE binary
+src-tauri/resources/codex-runtime/codex-package.json binary
+src-tauri/resources/codex-runtime/manifest.json binary
+
 *.icns binary
 *.ico binary
 *.png binary

@@ -1,6 +1,6 @@
 [package]
 name = "bsaigc_desktop"
-version = "1.3.2"
+version = "1.3.3"
 description = "BSAIGC business workbench desktop"
 authors = ["Banshan AIGC"]
 edition = "2021"

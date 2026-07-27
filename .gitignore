@@ -43,6 +43,7 @@ src-tauri/resources/codex-runtime/codex.exe
 # 旧版安装包与构建产物（不入库，太大且是产物）
 release/
 *-setup.exe
+!src-tauri/resources/codex-runtime/codex-resources/codex-windows-sandbox-setup.exe
 
 # 本地操作脚本（含密钥，只在本机用，不入库）
 *.bat
