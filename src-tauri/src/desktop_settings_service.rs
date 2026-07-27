@@ -651,7 +651,12 @@ impl DesktopSettingsService {
                 return Some(Self::platform_manifest_url(value));
             }
         }
-        crate::r2_backup::load_update_manifest_url().map(Self::platform_manifest_url)
+        #[cfg(not(test))]
+        {
+            crate::r2_backup::load_update_manifest_url().map(Self::platform_manifest_url)
+        }
+        #[cfg(test)]
+        None
     }
 
     /// Windows 读 version.json;macOS 自动改读同目录的 version-mac.json。
@@ -2002,8 +2007,8 @@ mod tests {
         );
         assert!(!status.channel_adapters[0].configured);
         assert!(!status.update.automatic_install_allowed);
-        assert_eq!(status.update.state, "adapterPending");
-        assert!(status.update.message.contains("no network"));
+        assert_eq!(status.update.state, "idle");
+        assert!(status.update.message.contains("检查更新"));
     }
 
     #[test]
@@ -2019,7 +2024,7 @@ mod tests {
         assert!(!first.snapshot.update.update_source_configured);
         assert!(!first.snapshot.update.automatic_install_allowed);
         assert!(first.snapshot.update.last_checked_at.is_some());
-        assert!(first.snapshot.update.message.contains("reserved"));
+        assert!(first.snapshot.update.message.contains("未配置在线更新源"));
 
         let replay = fixture
             .service

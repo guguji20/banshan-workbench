@@ -8,6 +8,7 @@ mod auth_service;
 mod backup_outbox;
 mod brain_host;
 mod brain_store;
+mod brain_workspace_registry;
 mod business_closure_service;
 mod business_skill_service;
 mod business_tool_host_adapter;
@@ -41,6 +42,7 @@ mod memory_service;
 mod module_registry;
 pub mod protocol;
 mod r2_backup;
+mod remembered_auth;
 mod requirement_brief_service;
 #[allow(dead_code)]
 mod review_report;
@@ -54,7 +56,9 @@ mod task_runner;
 use ai_credential_service::AiCredentialService;
 use asset_source_registry::AssetSourceRegistry;
 use backup_outbox::BackupOutbox;
-use brain_host::{BrainHost, BrainSubscription};
+use base64::Engine;
+use brain_host::{BrainExecutionAttachment, BrainExecutionContext, BrainHost, BrainSubscription};
+use brain_workspace_registry::BrainWorkspaceRegistry;
 use business_tool_host_adapter::BusinessToolHostAdapter;
 use business_tool_registry::BusinessToolRegistry;
 use desktop_settings_service::DesktopSettingsService;
@@ -67,8 +71,9 @@ use protocol::{
     AssetCommandEnvelope, AssetCommandResponse, AssetDomainEvent, AssetRecord,
     AssetSourceSelection, AuthChangePasswordPayload, AuthCreateUserPayload, AuthCredentials,
     AuthDeleteUserPayload, AuthResetPasswordPayload, AuthStatus, AuthUsersSnapshot,
-    BackupCommandEnvelope, BackupCommandResponse, BackupDomainEvent, BrainHostHealth,
-    BrainThreadRecord, BrainTurnRecord, BrainTurnStartResult, BusinessCustomerReceivableSummary,
+    BackupCommandEnvelope, BackupCommandResponse, BackupDomainEvent, BrainAttachmentPreview,
+    BrainDroppedItems, BrainHostHealth, BrainThreadRecord, BrainTurnContext, BrainTurnRecord,
+    BrainTurnStartResult, BrainWorkspaceSelection, BusinessCustomerReceivableSummary,
     BusinessWorkspaceCommandEnvelope, BusinessWorkspaceCommandResponse,
     BusinessWorkspaceDomainEvent, BusinessWorkspacePrefillCandidate,
     BusinessWorkspacePrefillPreview, BusinessWorkspaceRecord, CaseCommandEnvelope,
@@ -85,9 +90,10 @@ use protocol::{
     PreviewBusinessWorkspacePrefillRequest, ProjectRecord, QueueAssetBackupPayload,
     RemoteBrainThreadPage, ReplayEventsRequest, RequirementBriefCommandEnvelope,
     RequirementBriefCommandResponse, RequirementBriefDomainEvent, RequirementBriefRecord,
-    ResolveApprovalPayload, ResumeBrainThreadRequest, ReviewFindingRecord, StartBrainThreadRequest,
-    StartBrainTurnRequest, TaskCommandEnvelope, TaskCommandResponse, TaskDomainEvent, TaskRecord,
-    ASSET_EVENT_CHANNEL, BACKUP_EVENT_CHANNEL, BACKUP_PROTOCOL_VERSION, BRAIN_EVENT_CHANNEL,
+    ResolveApprovalPayload, ResumeBrainThreadRequest, ReviewFindingRecord,
+    StageClipboardImageRequest, StartBrainThreadRequest, StartBrainTurnRequest,
+    TaskCommandEnvelope, TaskCommandResponse, TaskDomainEvent, TaskRecord, ASSET_EVENT_CHANNEL,
+    BACKUP_EVENT_CHANNEL, BACKUP_PROTOCOL_VERSION, BRAIN_EVENT_CHANNEL,
     BUSINESS_WORKSPACE_EVENT_CHANNEL, CASE_EVENT_CHANNEL, CONTRACT_REVIEW_EVENT_CHANNEL,
     DOMAIN_EVENT_CHANNEL, EXECUTION_BRIEF_EVENT_CHANNEL, REQUIREMENT_BRIEF_EVENT_CHANNEL,
     TASK_EVENT_CHANNEL,
@@ -95,7 +101,8 @@ use protocol::{
 use r2_backup::R2BackupWorker;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use task_engine::TaskEngine;
 use task_runner::{TaskLifecycleEventSink, TaskRunner};
@@ -110,8 +117,10 @@ struct AppState {
     media_engine: Arc<MediaEngine>,
     asset_connection: Arc<Mutex<Connection>>,
     asset_sources: AssetSourceRegistry,
+    brain_workspaces: BrainWorkspaceRegistry,
     vault_root: PathBuf,
     generated_staging_root: PathBuf,
+    chat_attachment_staging_root: PathBuf,
     backup_outbox: Arc<BackupOutbox>,
     backup_worker: R2BackupWorker,
     diagnostics: DiagnosticOutbox,
@@ -153,6 +162,21 @@ fn auth_login(
 #[tauri::command]
 fn auth_logout(state: State<'_, AppState>) -> Result<AuthStatus, HostError> {
     Ok(state.auth.logout())
+}
+
+#[tauri::command]
+fn auth_remembered_credentials() -> Result<Option<AuthCredentials>, HostError> {
+    remembered_auth::load()
+}
+
+#[tauri::command]
+fn auth_remember_credentials(credentials: AuthCredentials) -> Result<(), HostError> {
+    remembered_auth::save(credentials)
+}
+
+#[tauri::command]
+fn auth_forget_credentials() -> Result<(), HostError> {
+    remembered_auth::clear()
 }
 
 #[tauri::command]
@@ -274,6 +298,147 @@ async fn select_asset_source(
 }
 
 #[tauri::command]
+async fn select_asset_sources(
+    state: State<'_, AppState>,
+) -> Result<Vec<AssetSourceSelection>, HostError> {
+    let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_files())
+        .await
+        .map_err(|error| HostError::internal(format!("asset picker task failed: {error}")))?;
+    selected
+        .unwrap_or_default()
+        .into_iter()
+        .take(20)
+        .map(|path| state.asset_sources.issue(path))
+        .collect()
+}
+
+#[tauri::command]
+async fn select_brain_workspace(
+    state: State<'_, AppState>,
+) -> Result<Option<BrainWorkspaceSelection>, HostError> {
+    let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+        .await
+        .map_err(|error| HostError::internal(format!("workspace picker task failed: {error}")))?;
+    selected
+        .map(|path| state.brain_workspaces.issue(path))
+        .transpose()
+}
+
+#[tauri::command]
+fn register_brain_dropped_paths(
+    state: State<'_, AppState>,
+    paths: Vec<PathBuf>,
+) -> Result<BrainDroppedItems, HostError> {
+    if paths.len() > 20 {
+        return Err(HostError::validation("drop at most 20 items at a time"));
+    }
+    let mut files = Vec::new();
+    let mut workspace = None;
+    for path in paths {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            HostError::new(
+                "BRAIN_DROP_UNAVAILABLE",
+                format!("dropped item is unavailable: {error}"),
+                false,
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(HostError::new(
+                "BRAIN_DROP_INVALID",
+                "symbolic links cannot be dropped into Brain",
+                false,
+            ));
+        }
+        if metadata.is_file() {
+            files.push(state.asset_sources.issue(path)?);
+        } else if metadata.is_dir() && workspace.is_none() {
+            workspace = Some(state.brain_workspaces.issue(path)?);
+        }
+    }
+    Ok(BrainDroppedItems { files, workspace })
+}
+
+#[tauri::command]
+fn stage_clipboard_image(
+    state: State<'_, AppState>,
+    request: StageClipboardImageRequest,
+) -> Result<AssetSourceSelection, HostError> {
+    const MAX_CLIPBOARD_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+    let extension = match request.mime_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        _ => {
+            return Err(HostError::validation(
+                "clipboard item must be a supported image",
+            ))
+        }
+    };
+    if request.bytes.is_empty() || request.bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err(HostError::validation(
+            "clipboard image must be between 1 byte and 20 MiB",
+        ));
+    }
+    fs::create_dir_all(&state.chat_attachment_staging_root).map_err(|error| {
+        HostError::internal(format!(
+            "create chat attachment staging directory failed: {error}"
+        ))
+    })?;
+    let requested_stem = Path::new(&request.file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("clipboard-image")
+        .chars()
+        .filter(|character| character.is_alphanumeric() || matches!(character, '-' | '_'))
+        .take(48)
+        .collect::<String>();
+    let stem = if requested_stem.is_empty() {
+        "clipboard-image"
+    } else {
+        requested_stem.as_str()
+    };
+    let path =
+        state
+            .chat_attachment_staging_root
+            .join(format!("{stem}-{}.{}", Uuid::new_v4(), extension));
+    fs::write(&path, request.bytes)
+        .map_err(|error| HostError::internal(format!("stage clipboard image failed: {error}")))?;
+    match state.asset_sources.issue_temporary(path.clone()) {
+        Ok(selection) => Ok(selection),
+        Err(error) => {
+            let _ = fs::remove_file(path);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn get_brain_attachment_preview(
+    state: State<'_, AppState>,
+    asset_id: String,
+) -> Result<Option<BrainAttachmentPreview>, HostError> {
+    const MAX_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
+    let connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset SQLite lock is poisoned"))?;
+    let (asset, path) =
+        asset_service::verify_ready_asset_integrity(&connection, &state.vault_root, &asset_id)?;
+    if asset.kind != protocol::AssetKind::Image || asset.size_bytes as u64 > MAX_PREVIEW_BYTES {
+        return Ok(None);
+    }
+    let bytes = fs::read(path)
+        .map_err(|error| HostError::internal(format!("read attachment preview failed: {error}")))?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(Some(BrainAttachmentPreview {
+        mime_type: asset.mime_type.clone(),
+        data_url: format!("data:{};base64,{encoded}", asset.mime_type),
+    }))
+}
+
+#[tauri::command]
 fn execute_asset_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -288,12 +453,23 @@ fn execute_asset_command(
         .asset_connection
         .lock()
         .map_err(|_| HostError::internal("asset SQLite lock is poisoned"))?;
+    let mut temporary_source = None;
     let outcome = asset_service::execute_import_command_with_resolver(
         &mut connection,
         &state.vault_root,
         command,
-        || state.asset_sources.consume(&source_token),
-    )?;
+        || {
+            let consumed = state.asset_sources.consume(&source_token)?;
+            if consumed.delete_after_consume {
+                temporary_source = Some(consumed.path.clone());
+            }
+            Ok(consumed.path)
+        },
+    );
+    if let Some(path) = temporary_source {
+        let _ = fs::remove_file(path);
+    }
+    let outcome = outcome?;
     let backup_asset = outcome.response.asset.clone();
     drop(connection);
     emit_after_commit(&app, ASSET_EVENT_CHANNEL, &outcome.emitted_events);
@@ -1576,9 +1752,45 @@ async fn brain_thread_list_remote(
 async fn brain_turn_start(
     state: State<'_, AppState>,
     request: StartBrainTurnRequest,
+    context: Option<BrainTurnContext>,
 ) -> Result<BrainTurnStartResult, HostError> {
+    let context = context.unwrap_or_default();
+    if context.attachment_asset_ids.len() > 20 {
+        return Err(HostError::validation("attach at most 20 files to one turn"));
+    }
+    let workspace_root = context
+        .workspace_token
+        .as_deref()
+        .map(|token| state.brain_workspaces.resolve(token))
+        .transpose()?;
+    let attachments = {
+        let connection = state
+            .asset_connection
+            .lock()
+            .map_err(|_| HostError::internal("asset SQLite lock is poisoned"))?;
+        let mut attachments = Vec::with_capacity(context.attachment_asset_ids.len());
+        for asset_id in &context.attachment_asset_ids {
+            let (asset, path) = asset_service::verify_ready_asset_integrity(
+                &connection,
+                &state.vault_root,
+                asset_id,
+            )?;
+            attachments.push(BrainExecutionAttachment {
+                display_name: asset.original_name,
+                mime_type: asset.mime_type,
+                path,
+                is_image: asset.kind == protocol::AssetKind::Image,
+            });
+        }
+        attachments
+    };
+    let execution_context = BrainExecutionContext {
+        workspace_root,
+        access_mode: context.access_mode,
+        attachments,
+    };
     let brain = state.brain.clone();
-    run_brain(move || brain.start_turn(request)).await
+    run_brain(move || brain.start_turn_with_context(request, execution_context)).await
 }
 
 #[tauri::command]
@@ -1605,6 +1817,15 @@ fn brain_thread_archive(
     archived: bool,
 ) -> Result<BrainThreadRecord, HostError> {
     state.brain.archive_local_thread(&thread_id, archived)
+}
+
+#[tauri::command]
+fn brain_thread_rename(
+    state: State<'_, AppState>,
+    thread_id: String,
+    title: String,
+) -> Result<BrainThreadRecord, HostError> {
+    state.brain.rename_local_thread(&thread_id, &title)
 }
 
 #[tauri::command]
@@ -1774,6 +1995,8 @@ pub fn run() {
             let database_path = data_root.join("ledger").join("bsaigc.sqlite3");
             let vault_path = data_root.join("vault");
             let generated_staging_root = data_root.join("staging").join("contract-review");
+            let chat_attachment_staging_root =
+                data_root.join("staging").join("chat-attachments");
             let desktop_settings = DesktopSettingsService::open(
                 &data_root,
                 codex_host::REQUIRED_CODEX_VERSION,
@@ -1945,8 +2168,10 @@ pub fn run() {
                 media_engine,
                 asset_connection,
                 asset_sources: AssetSourceRegistry::default(),
+                brain_workspaces: BrainWorkspaceRegistry::default(),
                 vault_root: vault_path,
                 generated_staging_root,
+                chat_attachment_staging_root,
                 backup_outbox,
                 backup_worker,
                 diagnostics,
@@ -1963,6 +2188,9 @@ pub fn run() {
             auth_initialize_admin,
             auth_login,
             auth_logout,
+            auth_remembered_credentials,
+            auth_remember_credentials,
+            auth_forget_credentials,
             auth_change_password,
             auth_list_users,
             auth_create_user,
@@ -1976,6 +2204,11 @@ pub fn run() {
             list_tasks,
             replay_task_events,
             select_asset_source,
+            select_asset_sources,
+            select_brain_workspace,
+            register_brain_dropped_paths,
+            stage_clipboard_image,
+            get_brain_attachment_preview,
             execute_asset_command,
             list_assets,
             replay_asset_events,
@@ -2022,6 +2255,7 @@ pub fn run() {
             brain_list_local_threads,
             brain_list_local_turns,
             brain_thread_archive,
+            brain_thread_rename,
             brain_thread_delete,
             get_brain_health,
             get_native_media_health,

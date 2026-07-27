@@ -12,8 +12,8 @@ use crate::codex_runtime::{
     ThreadSortKey, ThreadStartParams, TurnInterruptParams, TurnStartParams, UserInput,
 };
 use crate::protocol::{
-    BrainHostHealth, BrainStreamEvent, BrainThreadRecord, BrainThreadStatus, BrainTurnRecord,
-    BrainTurnStartResult, BrainTurnStatus, HostError, InterruptBrainTurnRequest,
+    BrainAccessMode, BrainHostHealth, BrainStreamEvent, BrainThreadRecord, BrainThreadStatus,
+    BrainTurnRecord, BrainTurnStartResult, BrainTurnStatus, HostError, InterruptBrainTurnRequest,
     ListRemoteBrainThreadsRequest, RemoteBrainThreadPage, ResumeBrainThreadRequest,
     StartBrainThreadRequest, StartBrainTurnRequest,
 };
@@ -91,6 +91,21 @@ pub(crate) struct StructuredBrainTurnRequest {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BrainExecutionAttachment {
+    pub display_name: String,
+    pub mime_type: String,
+    pub path: PathBuf,
+    pub is_image: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BrainExecutionContext {
+    pub workspace_root: Option<PathBuf>,
+    pub access_mode: BrainAccessMode,
+    pub attachments: Vec<BrainExecutionAttachment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,9 +317,10 @@ impl BrainHost {
         })
     }
 
-    pub fn start_turn(
+    pub(crate) fn start_turn_with_context(
         &self,
         request: StartBrainTurnRequest,
+        context: BrainExecutionContext,
     ) -> Result<BrainTurnStartResult, HostError> {
         validate_id("threadId", &request.thread_id)?;
         validate_input(&request.input_text)?;
@@ -331,17 +347,34 @@ impl BrainHost {
         lock_unpoisoned(&self.inner.reducer).register_pending(&request.thread_id, &local_turn_id);
         self.update_thread_status(&request.thread_id, BrainThreadStatus::Running)?;
 
+        let workspace = context
+            .workspace_root
+            .unwrap_or_else(|| self.inner.workspace_root.clone());
+        let workspace_string = workspace.to_string_lossy().into_owned();
+        let (approval_policy, approvals_reviewer, sandbox_policy) =
+            execution_permissions(context.access_mode, &workspace_string);
+        let mut runtime_input = vec![UserInput::Text {
+            text: attachment_context_text(&request.input_text, &context.attachments),
+            text_elements: Vec::<TextElement>::new(),
+        }];
+        runtime_input.extend(
+            context
+                .attachments
+                .iter()
+                .filter(|attachment| attachment.is_image)
+                .map(|attachment| UserInput::LocalImage {
+                    detail: None,
+                    path: attachment.path.to_string_lossy().into_owned(),
+                }),
+        );
         let params = TurnStartParams {
             thread_id: request.thread_id.clone(),
             client_user_message_id: Some(local_turn_id.clone()),
-            input: vec![UserInput::Text {
-                text: request.input_text,
-                text_elements: Vec::<TextElement>::new(),
-            }],
-            cwd: Some(self.workspace_string()),
-            approval_policy: Some(AskForApproval::Policy(ApprovalPolicy::OnRequest)),
-            approvals_reviewer: Some(ApprovalsReviewer::User),
-            sandbox_policy: Some(self.fixed_sandbox_policy()),
+            input: runtime_input,
+            cwd: Some(workspace_string),
+            approval_policy: Some(approval_policy),
+            approvals_reviewer: Some(approvals_reviewer),
+            sandbox_policy: Some(sandbox_policy),
             model: request.model,
             service_tier: None,
             effort: request.effort,
@@ -626,6 +659,21 @@ impl BrainHost {
         brain_store::set_thread_status(&connection, thread_id, &next, now_millis())
     }
 
+    pub fn rename_local_thread(
+        &self,
+        thread_id: &str,
+        title: &str,
+    ) -> Result<BrainThreadRecord, HostError> {
+        validate_id("threadId", thread_id)?;
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(HostError::validation("conversation title is required"));
+        }
+        validate_optional_text("title", Some(title), MAX_TITLE_CHARS)?;
+        let connection = lock_connection(&self.inner.connection)?;
+        brain_store::set_thread_title(&connection, thread_id, title, now_millis())
+    }
+
     /// Permanently deletes a local conversation and its turns.
     pub fn delete_local_thread(&self, thread_id: &str) -> Result<(), HostError> {
         validate_id("threadId", thread_id)?;
@@ -726,15 +774,6 @@ impl BrainHost {
             _subscription: subscription,
         });
         Ok(runtime)
-    }
-
-    fn fixed_sandbox_policy(&self) -> SandboxPolicy {
-        SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![self.workspace_string()],
-            network_access: false,
-            exclude_tmpdir_env_var: true,
-            exclude_slash_tmp: true,
-        }
     }
 
     fn workspace_string(&self) -> String {
@@ -1707,8 +1746,58 @@ fn business_dynamic_tool_specs() -> Vec<DynamicToolSpec> {
 
 fn fixed_developer_instructions() -> String {
     format!(
-        "Operate only inside the BSAIGC-managed workspace. Never expose local paths, credentials, provider configuration, or raw tool arguments. Request approval before any irreversible action.\n\n{BUSINESS_SYSTEM_PROMPT}"
+        "Operate only inside the active workspace assigned by the host, except for explicitly attached read-only input files. Never expose local paths, credentials, provider configuration, or raw tool arguments. Respect the host approval and sandbox mode, and request approval before any irreversible action when approvals are enabled.\n\n{BUSINESS_SYSTEM_PROMPT}"
     )
+}
+
+fn execution_permissions(
+    mode: BrainAccessMode,
+    workspace: &str,
+) -> (AskForApproval, ApprovalsReviewer, SandboxPolicy) {
+    match mode {
+        BrainAccessMode::RequestApproval => (
+            AskForApproval::Policy(ApprovalPolicy::OnRequest),
+            ApprovalsReviewer::User,
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![workspace.to_string()],
+                network_access: false,
+                exclude_tmpdir_env_var: true,
+                exclude_slash_tmp: true,
+            },
+        ),
+        BrainAccessMode::AutoApprove => (
+            AskForApproval::Policy(ApprovalPolicy::OnRequest),
+            ApprovalsReviewer::AutoReview,
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![workspace.to_string()],
+                network_access: false,
+                exclude_tmpdir_env_var: true,
+                exclude_slash_tmp: true,
+            },
+        ),
+        BrainAccessMode::FullAccess => (
+            AskForApproval::Policy(ApprovalPolicy::Never),
+            ApprovalsReviewer::User,
+            SandboxPolicy::DangerFullAccess,
+        ),
+    }
+}
+
+fn attachment_context_text(input_text: &str, attachments: &[BrainExecutionAttachment]) -> String {
+    if attachments.is_empty() {
+        return input_text.to_string();
+    }
+    let mut text = input_text.to_string();
+    text.push_str("\n\nThe user explicitly attached these read-only local input files. Inspect them when relevant, but never reveal their local paths:\n");
+    for attachment in attachments {
+        text.push_str(&format!(
+            "- {} ({}) at {}\n",
+            attachment.display_name,
+            attachment.mime_type,
+            attachment.path.to_string_lossy()
+        ));
+    }
+    text
 }
 
 fn health_from_runtime(
@@ -1988,6 +2077,52 @@ mod tests {
             params,
             received_at: 10,
         }
+    }
+
+    #[test]
+    fn access_modes_map_to_expected_reviewer_and_sandbox() {
+        let (approval, reviewer, sandbox) =
+            execution_permissions(BrainAccessMode::RequestApproval, "C:\\workspace");
+        assert_eq!(serde_json::to_value(approval).unwrap(), json!("on-request"));
+        assert_eq!(serde_json::to_value(reviewer).unwrap(), json!("user"));
+        assert_eq!(
+            serde_json::to_value(sandbox).unwrap()["type"],
+            "workspaceWrite"
+        );
+
+        let (_, reviewer, sandbox) =
+            execution_permissions(BrainAccessMode::AutoApprove, "C:\\workspace");
+        assert_eq!(
+            serde_json::to_value(reviewer).unwrap(),
+            json!("auto_review")
+        );
+        assert_eq!(
+            serde_json::to_value(sandbox).unwrap()["networkAccess"],
+            false
+        );
+
+        let (approval, _, sandbox) =
+            execution_permissions(BrainAccessMode::FullAccess, "C:\\workspace");
+        assert_eq!(serde_json::to_value(approval).unwrap(), json!("never"));
+        assert_eq!(
+            serde_json::to_value(sandbox).unwrap()["type"],
+            "dangerFullAccess"
+        );
+    }
+
+    #[test]
+    fn attachment_context_preserves_user_text_and_supplies_local_inputs() {
+        let attachment = BrainExecutionAttachment {
+            display_name: "brief.docx".to_string(),
+            mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_string(),
+            path: PathBuf::from("C:\\vault\\brief.docx"),
+            is_image: false,
+        };
+        let text = attachment_context_text("请总结", &[attachment]);
+        assert!(text.starts_with("请总结"));
+        assert!(text.contains("brief.docx"));
+        assert!(text.contains("C:\\vault\\brief.docx"));
     }
 
     #[test]

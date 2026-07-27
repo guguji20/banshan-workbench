@@ -171,7 +171,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return None;
     }
     (0..value.len())
@@ -225,7 +225,7 @@ fn validate_password(password: &str) -> Result<(), HostError> {
 fn normalize_username(username: &str) -> Result<String, HostError> {
     let trimmed = username.trim();
     let chars = trimmed.chars().count();
-    if chars < 2 || chars > MAX_USERNAME_CHARS {
+    if !(2..=MAX_USERNAME_CHARS).contains(&chars) {
         return Err(auth_error(
             "AUTH_INVALID_USERNAME",
             format!("username must be 2..{MAX_USERNAME_CHARS} characters"),
@@ -976,7 +976,11 @@ mod tests {
 
     fn service() -> AuthService {
         let connection = Connection::open_in_memory().expect("open in-memory SQLite");
-        AuthService::new(Arc::new(Mutex::new(connection))).expect("create auth service")
+        let mut service =
+            AuthService::new(Arc::new(Mutex::new(connection))).expect("create auth service");
+        service.registry = None;
+        service.set_feedback(AuthRegistrySync::LocalOnly, None);
+        service
     }
 
     #[test]

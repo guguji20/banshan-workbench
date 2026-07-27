@@ -526,6 +526,39 @@ pub struct AssetSourceSelection {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BrainWorkspaceSelection {
+    pub workspace_token: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BrainDroppedItems {
+    pub files: Vec<AssetSourceSelection>,
+    pub workspace: Option<BrainWorkspaceSelection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct StageClipboardImageRequest {
+    pub file_name: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BrainAttachmentPreview {
+    pub mime_type: String,
+    pub data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
 pub struct ImportAssetPayload {
     pub source_token: String,
     pub project_id: Option<String>,
@@ -4110,6 +4143,25 @@ pub struct StartBrainTurnRequest {
     pub input_text: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"))]
+pub enum BrainAccessMode {
+    #[default]
+    RequestApproval,
+    AutoApprove,
+    FullAccess,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BrainTurnContext {
+    pub workspace_token: Option<String>,
+    pub access_mode: BrainAccessMode,
+    pub attachment_asset_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

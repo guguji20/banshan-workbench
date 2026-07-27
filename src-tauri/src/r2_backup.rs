@@ -7,8 +7,8 @@ use object_store::aws::{AmazonS3, AmazonS3Builder};
 use object_store::multipart::MultipartStore;
 use object_store::path::Path as ObjectPath;
 use object_store::{
-    Attribute, Attributes, ClientOptions, GetOptions, ObjectStore, PutMultipartOptions, PutOptions,
-    ObjectStoreExt, PutResult,
+    Attribute, Attributes, ClientOptions, GetOptions, ObjectStore, ObjectStoreExt,
+    PutMultipartOptions, PutOptions, PutResult,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -1677,10 +1677,6 @@ enum R2ConfigLoad {
 }
 
 impl R2Config {
-    fn from_env() -> R2ConfigLoad {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
     /// Loads the R2 configuration from (in priority order) environment
     /// variables, then a `r2.config.json` file next to the executable /
     /// bundled resources / project root. The file keeps end users away from
@@ -1945,6 +1941,7 @@ fn load_r2_config_file() -> Option<HashMap<String, String>> {
     None
 }
 
+#[cfg(not(test))]
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateConfigProbe {
@@ -1954,6 +1951,7 @@ struct UpdateConfigProbe {
 
 /// Reads the online-update manifest URL from the same `r2.config.json`.
 /// Only HTTPS URLs are accepted.
+#[cfg(not(test))]
 pub(crate) fn load_update_manifest_url() -> Option<String> {
     for candidate in r2_config_file_candidates() {
         let Ok(raw) = fs::read_to_string(&candidate) else {

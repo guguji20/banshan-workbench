@@ -12,6 +12,13 @@ const DEFAULT_MAX_TOKENS: usize = 100;
 struct SourceToken {
     path: PathBuf,
     expires_at: Instant,
+    delete_after_consume: bool,
+}
+
+#[derive(Debug)]
+pub struct ConsumedAssetSource {
+    pub path: PathBuf,
+    pub delete_after_consume: bool,
 }
 
 pub struct AssetSourceRegistry {
@@ -36,6 +43,18 @@ impl AssetSourceRegistry {
     }
 
     pub fn issue(&self, path: PathBuf) -> Result<AssetSourceSelection, HostError> {
+        self.issue_inner(path, false)
+    }
+
+    pub fn issue_temporary(&self, path: PathBuf) -> Result<AssetSourceSelection, HostError> {
+        self.issue_inner(path, true)
+    }
+
+    fn issue_inner(
+        &self,
+        path: PathBuf,
+        delete_after_consume: bool,
+    ) -> Result<AssetSourceSelection, HostError> {
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             HostError::new(
                 "ASSET_SOURCE_UNAVAILABLE",
@@ -71,7 +90,9 @@ impl AssetSourceRegistry {
                 .min_by_key(|(_, value)| value.expires_at)
                 .map(|(key, _)| key.clone())
             {
-                tokens.remove(&oldest);
+                if let Some(source) = tokens.remove(&oldest) {
+                    cleanup_source(&source);
+                }
             }
         }
         tokens.insert(
@@ -79,6 +100,7 @@ impl AssetSourceRegistry {
             SourceToken {
                 path: path.clone(),
                 expires_at: Instant::now() + self.token_ttl,
+                delete_after_consume,
             },
         );
         Ok(AssetSourceSelection {
@@ -89,7 +111,7 @@ impl AssetSourceRegistry {
         })
     }
 
-    pub fn consume(&self, source_token: &str) -> Result<PathBuf, HostError> {
+    pub fn consume(&self, source_token: &str) -> Result<ConsumedAssetSource, HostError> {
         if Uuid::parse_str(source_token).is_err() {
             return Err(HostError::validation("sourceToken must be a UUID"));
         }
@@ -100,7 +122,10 @@ impl AssetSourceRegistry {
         remove_expired(&mut tokens);
         tokens
             .remove(source_token)
-            .map(|entry| entry.path)
+            .map(|entry| ConsumedAssetSource {
+                path: entry.path,
+                delete_after_consume: entry.delete_after_consume,
+            })
             .ok_or_else(|| {
                 HostError::new(
                     "ASSET_SOURCE_TOKEN_INVALID",
@@ -113,7 +138,32 @@ impl AssetSourceRegistry {
 
 fn remove_expired(tokens: &mut HashMap<String, SourceToken>) {
     let now = Instant::now();
-    tokens.retain(|_, value| value.expires_at > now);
+    let expired = tokens
+        .iter()
+        .filter(|(_, value)| value.expires_at <= now)
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    for key in expired {
+        if let Some(source) = tokens.remove(&key) {
+            cleanup_source(&source);
+        }
+    }
+}
+
+fn cleanup_source(source: &SourceToken) {
+    if source.delete_after_consume {
+        let _ = fs::remove_file(&source.path);
+    }
+}
+
+impl Drop for AssetSourceRegistry {
+    fn drop(&mut self) {
+        if let Ok(tokens) = self.tokens.get_mut() {
+            for source in tokens.values() {
+                cleanup_source(source);
+            }
+        }
+    }
 }
 
 fn preliminary_kind(path: &Path) -> AssetKind {
@@ -150,7 +200,9 @@ mod tests {
         let serialized = serde_json::to_string(&selection).unwrap();
         assert!(!serialized.contains(directory.path().to_string_lossy().as_ref()));
 
-        assert_eq!(registry.consume(&selection.source_token).unwrap(), path);
+        let consumed = registry.consume(&selection.source_token).unwrap();
+        assert_eq!(consumed.path, path);
+        assert!(!consumed.delete_after_consume);
         assert_eq!(
             registry.consume(&selection.source_token).unwrap_err().code,
             "ASSET_SOURCE_TOKEN_INVALID"
@@ -168,5 +220,20 @@ mod tests {
             registry.consume(&selection.source_token).unwrap_err().code,
             "ASSET_SOURCE_TOKEN_INVALID"
         );
+    }
+
+    #[test]
+    fn expired_temporary_source_is_removed() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("clipboard.png");
+        fs::write(&path, b"clipboard").unwrap();
+        let registry = AssetSourceRegistry::new(Duration::ZERO, 2);
+        let selection = registry.issue_temporary(path.clone()).unwrap();
+
+        assert_eq!(
+            registry.consume(&selection.source_token).unwrap_err().code,
+            "ASSET_SOURCE_TOKEN_INVALID"
+        );
+        assert!(!path.exists());
     }
 }

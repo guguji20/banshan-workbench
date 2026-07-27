@@ -17,6 +17,7 @@ import {
   BusinessWorkbench,
   type DesktopSection,
 } from "./components/BusinessWorkbench";
+import type { BrainAttachment, BrainWorkspace } from "./components/BrainCenter";
 import {
   SettingsCenter,
   type AiProviderInput,
@@ -44,6 +45,7 @@ import type { TaskStatusFilter } from "./components/TaskCenter";
 import type { BriefRecord } from "./generated/bsaigc/BriefRecord";
 import type { CodexProbeStatus } from "./generated/bsaigc/CodexProbeStatus";
 import type { CreateProjectPayload } from "./generated/bsaigc/CreateProjectPayload";
+import type { AuthCredentials } from "./generated/bsaigc/AuthCredentials";
 import type { AuthStatus } from "./generated/bsaigc/AuthStatus";
 import type { HostError } from "./generated/bsaigc/HostError";
 import type { HostStatus } from "./generated/bsaigc/HostStatus";
@@ -61,6 +63,7 @@ import type { ReviewFindingDecision } from "./generated/bsaigc/ReviewFindingDeci
 import type { ReviewFindingRecord } from "./generated/bsaigc/ReviewFindingRecord";
 import type { ReviewReportFormat } from "./generated/bsaigc/ReviewReportFormat";
 import type { BrainHostHealth } from "./generated/bsaigc/BrainHostHealth";
+import type { BrainAccessMode } from "./generated/bsaigc/BrainAccessMode";
 import type { NativeMediaHealth } from "./generated/bsaigc/NativeMediaHealth";
 import type { CaseRecord } from "./generated/bsaigc/CaseRecord";
 import type { ExecutionBriefContent } from "./generated/bsaigc/ExecutionBriefContent";
@@ -133,17 +136,24 @@ function App() {
   const [authChecked, setAuthChecked] = useState(!desktopRuntime);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [rememberedAuth, setRememberedAuth] =
+    useState<AuthCredentials | null>(null);
 
   useEffect(() => {
     if (!desktopRuntime) return;
     let cancelled = false;
-    client
-      .authStatus()
-      .then((status) => {
-        if (!cancelled) setAuthStatus(status);
-      })
-      .catch(() => {
-        // Older host without auth commands: skip the gate entirely.
+    Promise.allSettled([
+      client.authStatus(),
+      client.authRememberedCredentials(),
+    ])
+      .then(([statusResult, credentialsResult]) => {
+        if (cancelled) return;
+        if (statusResult.status === "fulfilled") {
+          setAuthStatus(statusResult.value);
+        }
+        if (credentialsResult.status === "fulfilled") {
+          setRememberedAuth(credentialsResult.value);
+        }
       })
       .finally(() => {
         if (!cancelled) setAuthChecked(true);
@@ -153,11 +163,16 @@ function App() {
     };
   }, []);
 
-  const runAuth = async (operation: () => Promise<AuthStatus>) => {
+  const runAuth = async (
+    operation: () => Promise<AuthStatus>,
+    afterSuccess?: (status: AuthStatus) => Promise<void>,
+  ) => {
     setAuthBusy(true);
     setAuthError(null);
     try {
-      setAuthStatus(await operation());
+      const status = await operation();
+      await afterSuccess?.(status);
+      setAuthStatus(status);
     } catch (error: unknown) {
       setAuthError(localizeAuthError(error));
     } finally {
@@ -165,11 +180,82 @@ function App() {
     }
   };
 
-  const handleAuthLogin = (username: string, password: string) =>
-    void runAuth(() => client.authLogin({ username, password }));
-  const handleAuthInitialize = (username: string, password: string) =>
-    void runAuth(() => client.authInitializeAdmin({ username, password }));
+  const syncRememberedAuth = async (
+    username: string,
+    password: string,
+    remember: boolean,
+  ) => {
+    if (remember) {
+      const credentials = { username, password };
+      await client.authRememberCredentials(credentials);
+      setRememberedAuth(credentials);
+      return;
+    }
+    await client.authForgetCredentials();
+    setRememberedAuth(null);
+  };
+
+  const finishRememberedLogin = (
+    username: string,
+    password: string,
+    remember: boolean,
+  ) => async () => {
+    try {
+      await syncRememberedAuth(username, password, remember);
+    } catch (error) {
+      await client.authLogout().catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const handleAuthLogin = (username: string, password: string, remember: boolean) =>
+    void runAuth(
+      () => client.authLogin({ username, password }),
+      finishRememberedLogin(username, password, remember),
+    );
+  const handleAuthInitialize = (
+    username: string,
+    password: string,
+    remember: boolean,
+  ) =>
+    void runAuth(
+      () => client.authInitializeAdmin({ username, password }),
+      finishRememberedLogin(username, password, remember),
+    );
   const handleAuthLogout = () => void runAuth(() => client.authLogout());
+  const handleForgetSavedAuth = () => {
+    setAuthBusy(true);
+    setAuthError(null);
+    void client
+      .authForgetCredentials()
+      .then(() => setRememberedAuth(null))
+      .catch((error: unknown) => setAuthError(localizeAuthError(error)))
+      .finally(() => setAuthBusy(false));
+  };
+  const handleAuthChangePassword = async (
+    oldPassword: string,
+    newPassword: string,
+  ) => {
+    const status = await client.authChangePassword({ oldPassword, newPassword });
+    setAuthStatus(status);
+    if (
+      rememberedAuth &&
+      status.currentUser?.username === rememberedAuth.username
+    ) {
+      const credentials = {
+        username: rememberedAuth.username,
+        password: newPassword,
+      };
+      try {
+        await client.authRememberCredentials(credentials);
+        setRememberedAuth(credentials);
+      } catch {
+        await client.authForgetCredentials().catch(() => undefined);
+        setRememberedAuth(null);
+      }
+    }
+    return status;
+  };
 
   const snapshot = useSyncExternalStore(
     client.subscribe,
@@ -220,6 +306,11 @@ function App() {
   const [selectedBrainThreadId, setSelectedBrainThreadId] = useState<string | null>(null);
   const [selectedBrainModel, setSelectedBrainModel] = useState("default");
   const [brainDraft, setBrainDraft] = useState("");
+  const [brainAttachments, setBrainAttachments] = useState<BrainAttachment[]>([]);
+  const [brainWorkspace, setBrainWorkspace] = useState<BrainWorkspace | null>(null);
+  const [brainAccessMode, setBrainAccessMode] =
+    useState<BrainAccessMode>("requestApproval");
+  const [isBrainAttaching, setIsBrainAttaching] = useState(false);
   const [isLoadingBrainThreads, setIsLoadingBrainThreads] = useState(false);
   const [isLoadingBrainTurns, setIsLoadingBrainTurns] = useState(false);
   const [isStartingBrainThread, setIsStartingBrainThread] = useState(false);
@@ -2008,8 +2099,15 @@ function App() {
   };
 
   const handleSendBrainTurn = async () => {
-    const inputText = brainDraft.trim();
-    if (!desktopRuntime || isSendingBrainTurn || !inputText) return;
+    const typedText = brainDraft.trim();
+    if (
+      !desktopRuntime ||
+      isSendingBrainTurn ||
+      (!typedText && brainAttachments.length === 0)
+    ) {
+      return;
+    }
+    const inputText = typedText || "请处理我附上的文件。";
     setIsSendingBrainTurn(true);
     client.clearError();
     try {
@@ -2020,8 +2118,13 @@ function App() {
         inputText,
         model: effectiveBrainModel === "default" ? null : effectiveBrainModel,
         effort: "medium",
+      }, {
+        workspaceToken: brainWorkspace?.workspaceToken ?? null,
+        accessMode: brainAccessMode,
+        attachmentAssetIds: brainAttachments.map((attachment) => attachment.assetId),
       });
       setBrainDraft("");
+      setBrainAttachments([]);
       setBrainHealth(await client.getBrainHealth());
     } catch {
       // Error state is rendered from the client snapshot.
@@ -2051,6 +2154,16 @@ function App() {
     }
   };
 
+  const handleRenameBrainThread = async (threadId: string, title: string) => {
+    if (!desktopRuntime || !title.trim()) return;
+    try {
+      await client.brainThreadRename(threadId, title.trim());
+      await client.refreshBrainThreads();
+    } catch {
+      // Error state is rendered from the client snapshot.
+    }
+  };
+
   const handleDeleteBrainThread = async (threadId: string) => {
     if (!desktopRuntime) return;
     try {
@@ -2064,21 +2177,85 @@ function App() {
     }
   };
 
-  const handleBrainAttach = async () => {
-    if (!desktopRuntime || !selectedProjectId) return;
+  const importBrainSources = useCallback(async (sources: AssetSourceSelection[]) => {
+    if (!desktopRuntime || sources.length === 0 || isBrainAttaching) return;
+    setIsBrainAttaching(true);
+    client.clearError();
     try {
-      const source = await client.selectAssetSource();
-      if (!source) return;
-      const imported = await client.importAsset(source.sourceToken, selectedProjectId);
+      for (const source of sources) {
+        const imported = await client.importAsset(source.sourceToken, selectedProjectId);
+        const preview = await client.getBrainAttachmentPreview(imported.asset.id).catch(() => null);
+        const attachment: BrainAttachment = {
+          assetId: imported.asset.id,
+          displayName: imported.asset.originalName,
+          kind: imported.asset.kind,
+          mimeType: imported.asset.mimeType,
+          sizeBytes: imported.asset.sizeBytes,
+          previewUrl: preview?.dataUrl ?? null,
+        };
+        setBrainAttachments((current) =>
+          current.some((candidate) => candidate.assetId === attachment.assetId)
+            ? current
+            : [...current, attachment],
+        );
+      }
       await client.refreshAssets();
-      setBrainDraft((current) => {
-        const separator = current && !current.endsWith("\n") ? "\n" : "";
-        return `${current}${separator}【附件】${imported.asset.originalName}（已存入资产库）\n`;
-      });
+    } catch {
+      // Error state is rendered from the client snapshot.
+    } finally {
+      setIsBrainAttaching(false);
+    }
+  }, [client, desktopRuntime, isBrainAttaching, selectedProjectId]);
+
+  const handleBrainAttach = useCallback(async () => {
+    if (!desktopRuntime || isBrainAttaching) return;
+    try {
+      const sources = await client.selectAssetSources();
+      await importBrainSources([...sources]);
     } catch {
       // Error state is rendered from the client snapshot.
     }
-  };
+  }, [client, desktopRuntime, importBrainSources, isBrainAttaching]);
+
+  const handleSelectBrainWorkspace = useCallback(async () => {
+    if (!desktopRuntime || isSendingBrainTurn) return;
+    try {
+      const workspace = await client.selectBrainWorkspace();
+      if (workspace) setBrainWorkspace(workspace);
+    } catch {
+      // Error state is rendered from the client snapshot.
+    }
+  }, [client, desktopRuntime, isSendingBrainTurn]);
+
+  const handleBrainDropPaths = useCallback(async (paths: string[]) => {
+    if (!desktopRuntime || isBrainAttaching || paths.length === 0) return;
+    try {
+      const dropped = await client.registerBrainDroppedPaths(paths);
+      if (dropped.workspace) setBrainWorkspace(dropped.workspace);
+      await importBrainSources([...dropped.files]);
+    } catch {
+      // Error state is rendered from the client snapshot.
+    }
+  }, [client, desktopRuntime, importBrainSources, isBrainAttaching]);
+
+  const handleBrainPasteImages = useCallback(async (files: File[]) => {
+    if (!desktopRuntime || isBrainAttaching || files.length === 0) return;
+    try {
+      const sources: AssetSourceSelection[] = [];
+      for (const [index, file] of files.entries()) {
+        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        const source = await client.stageClipboardImage({
+          fileName: file.name || `clipboard-image-${index + 1}.png`,
+          mimeType: file.type || "image/png",
+          bytes,
+        });
+        sources.push(source);
+      }
+      await importBrainSources(sources);
+    } catch {
+      // Error state is rendered from the client snapshot.
+    }
+  }, [client, desktopRuntime, importBrainSources, isBrainAttaching]);
 
   const handleRefreshBrain = async () => {
     if (!desktopRuntime || isLoadingBrainThreads) return;
@@ -2475,8 +2652,10 @@ function App() {
         status={authStatus}
         busy={authBusy}
         error={authError}
+        initialCredentials={rememberedAuth}
         onInitialize={handleAuthInitialize}
         onLogin={handleAuthLogin}
+        onForgetSaved={handleForgetSavedAuth}
       />
     );
   }
@@ -2524,6 +2703,9 @@ function App() {
       selectedBrainThreadId={selectedBrainThreadId}
       selectedBrainModel={effectiveBrainModel}
       brainDraft={brainDraft}
+      brainAttachments={brainAttachments}
+      brainWorkspace={brainWorkspace}
+      brainAccessMode={brainAccessMode}
       brainStreamingDelta={brainStreamingDelta}
       assetProjectFilter={assetProjectFilter}
       assetViewMode={assetViewMode}
@@ -2554,6 +2736,7 @@ function App() {
       isLoadingBrainTurns={isLoadingBrainTurns}
       isStartingBrainThread={isStartingBrainThread}
       isSendingBrainTurn={isSendingBrainTurn}
+      isBrainAttaching={isBrainAttaching}
       isRefreshingCases={isRefreshingCases}
       isSavingCase={isSavingCase}
       isRefreshingExecutionBriefs={isRefreshingExecutionBriefs}
@@ -2594,6 +2777,7 @@ function App() {
       onImportBusinessAsset={handleImportBusinessAsset}
       onDismissBusinessError={() => client.clearError()}
       onOpenSettings={openSettings}
+      onLogout={handleAuthLogout}
       onProjectQueryChange={setProjectQuery}
       onCreateProjectDraftChange={setCreateProjectDraft}
       onCreateProject={(draft) => void handleCreateProject(draft)}
@@ -2652,8 +2836,21 @@ function App() {
       onArchiveBrainThread={(threadId, archived) =>
         void handleArchiveBrainThread(threadId, archived)
       }
+      onRenameBrainThread={(threadId, title) =>
+        void handleRenameBrainThread(threadId, title)
+      }
       onDeleteBrainThread={(threadId) => void handleDeleteBrainThread(threadId)}
       onBrainAttach={() => void handleBrainAttach()}
+      onRemoveBrainAttachment={(assetId) =>
+        setBrainAttachments((current) =>
+          current.filter((attachment) => attachment.assetId !== assetId),
+        )
+      }
+      onSelectBrainWorkspace={() => void handleSelectBrainWorkspace()}
+      onClearBrainWorkspace={() => setBrainWorkspace(null)}
+      onBrainAccessModeChange={setBrainAccessMode}
+      onBrainDropPaths={(paths) => void handleBrainDropPaths(paths)}
+      onBrainPasteImages={(files) => void handleBrainPasteImages(files)}
       onRefreshBrain={() => void handleRefreshBrain()}
       onCaseFiltersChange={setCaseFilters}
       onCaseViewModeChange={setCaseViewMode}
@@ -2708,14 +2905,7 @@ function App() {
           setSettingsOpen(false);
           handleAuthLogout();
         }}
-        onAuthChangePassword={(oldPassword, newPassword) =>
-          client
-            .authChangePassword({ oldPassword, newPassword })
-            .then((status) => {
-              setAuthStatus(status);
-              return status;
-            })
-        }
+        onAuthChangePassword={handleAuthChangePassword}
         onAuthListUsers={() => client.authListUsers()}
         onAuthCreateUser={(username, password, role) =>
           client.authCreateUser({ username, password, role })

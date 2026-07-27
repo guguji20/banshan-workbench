@@ -9041,18 +9041,17 @@ mod tests {
 
         let mut changed_source_profile = profile_input(&source_workspace.profile);
         changed_source_profile.customer_tax_id = "CUSTOMER-TAX-CHANGED".to_string();
-        source_workspace = store
-            .execute(update_profile_command(
+        let frozen = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            update_profile_command(
                 &source_project_id,
                 &source_workspace,
                 changed_source_profile,
-            ))
-            .response
-            .business_workspace;
-        assert_eq!(
-            source_workspace.profile.customer_tax_id,
-            "CUSTOMER-TAX-CHANGED"
-        );
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(frozen.code, "BUSINESS_CUSTOMER_BINDING_FROZEN");
         let unchanged_target = list(&store.connection)
             .unwrap()
             .into_iter()

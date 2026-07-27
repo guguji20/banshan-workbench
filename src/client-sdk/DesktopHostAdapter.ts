@@ -20,6 +20,11 @@ import type { AssetCommandResponse } from "../generated/bsaigc/AssetCommandRespo
 import type { AssetDomainEvent } from "../generated/bsaigc/AssetDomainEvent";
 import type { AssetRecord } from "../generated/bsaigc/AssetRecord";
 import type { AssetSourceSelection } from "../generated/bsaigc/AssetSourceSelection";
+import type { BrainAttachmentPreview } from "../generated/bsaigc/BrainAttachmentPreview";
+import type { BrainDroppedItems } from "../generated/bsaigc/BrainDroppedItems";
+import type { BrainTurnContext } from "../generated/bsaigc/BrainTurnContext";
+import type { BrainWorkspaceSelection } from "../generated/bsaigc/BrainWorkspaceSelection";
+import type { StageClipboardImageRequest } from "../generated/bsaigc/StageClipboardImageRequest";
 import type { TaskCommandEnvelope } from "../generated/bsaigc/TaskCommandEnvelope";
 import type { TaskCommandResponse } from "../generated/bsaigc/TaskCommandResponse";
 import type { TaskDomainEvent } from "../generated/bsaigc/TaskDomainEvent";
@@ -137,6 +142,30 @@ export class DesktopHostAdapter implements HostAdapter {
     return invoke<AssetSourceSelection | null>("select_asset_source");
   }
 
+  selectAssetSources(): Promise<AssetSourceSelection[]> {
+    return invoke<AssetSourceSelection[]>("select_asset_sources");
+  }
+
+  selectBrainWorkspace(): Promise<BrainWorkspaceSelection | null> {
+    return invoke<BrainWorkspaceSelection | null>("select_brain_workspace");
+  }
+
+  registerBrainDroppedPaths(paths: string[]): Promise<BrainDroppedItems> {
+    return invoke<BrainDroppedItems>("register_brain_dropped_paths", { paths });
+  }
+
+  stageClipboardImage(
+    request: StageClipboardImageRequest,
+  ): Promise<AssetSourceSelection> {
+    return invoke<AssetSourceSelection>("stage_clipboard_image", { request });
+  }
+
+  getBrainAttachmentPreview(assetId: string): Promise<BrainAttachmentPreview | null> {
+    return invoke<BrainAttachmentPreview | null>("get_brain_attachment_preview", {
+      assetId,
+    });
+  }
+
   executeAssetCommand(command: AssetCommandEnvelope): Promise<AssetCommandResponse> {
     return invoke<AssetCommandResponse>("execute_asset_command", { command });
   }
@@ -177,8 +206,14 @@ export class DesktopHostAdapter implements HostAdapter {
     return invoke<RemoteBrainThreadPage>("brain_thread_list_remote", { request });
   }
 
-  startBrainTurn(request: StartBrainTurnRequest): Promise<BrainTurnStartResult> {
-    return invoke<BrainTurnStartResult>("brain_turn_start", { request });
+  startBrainTurn(
+    request: StartBrainTurnRequest,
+    context?: BrainTurnContext,
+  ): Promise<BrainTurnStartResult> {
+    return invoke<BrainTurnStartResult>("brain_turn_start", {
+      request,
+      context: context ?? null,
+    });
   }
 
   interruptBrainTurn(request: InterruptBrainTurnRequest): Promise<BrainTurnRecord> {
@@ -285,6 +320,10 @@ export class DesktopHostAdapter implements HostAdapter {
     return invoke<BrainThreadRecord>("brain_thread_archive", { threadId, archived });
   }
 
+  brainThreadRename(threadId: string, title: string): Promise<BrainThreadRecord> {
+    return invoke<BrainThreadRecord>("brain_thread_rename", { threadId, title });
+  }
+
   brainThreadDelete(threadId: string): Promise<void> {
     return invoke<void>("brain_thread_delete", { threadId });
   }
@@ -303,6 +342,18 @@ export class DesktopHostAdapter implements HostAdapter {
 
   authLogout(): Promise<AuthStatus> {
     return invoke<AuthStatus>("auth_logout");
+  }
+
+  authRememberedCredentials(): Promise<AuthCredentials | null> {
+    return invoke<AuthCredentials | null>("auth_remembered_credentials");
+  }
+
+  authRememberCredentials(credentials: AuthCredentials): Promise<void> {
+    return invoke<void>("auth_remember_credentials", { credentials });
+  }
+
+  authForgetCredentials(): Promise<void> {
+    return invoke<void>("auth_forget_credentials");
   }
 
   authChangePassword(payload: AuthChangePasswordPayload): Promise<AuthStatus> {

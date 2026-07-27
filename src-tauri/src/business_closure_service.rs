@@ -347,6 +347,7 @@ pub(crate) fn attach_customer_for_new_workspace(
     actor_id: &str,
     now: i64,
 ) -> Result<BusinessCustomerRecord, HostError> {
+    let input = customer_input_from_profile(profile);
     let (customer, match_kind) = if let Some(customer_id) = requested_customer_id {
         let customer = load_customer(transaction, customer_id)?;
         if customer.status != BusinessCustomerStatus::Active {
@@ -358,14 +359,9 @@ pub(crate) fn attach_customer_for_new_workspace(
         }
         (customer, "manual".to_string())
     } else {
-        resolve_or_create_customer(
-            transaction,
-            &customer_input_from_profile(profile),
-            workspace_id,
-            actor_id,
-            now,
-        )?
+        resolve_or_create_customer(transaction, &input, workspace_id, actor_id, now)?
     };
+    let customer = fill_missing_customer_fields(transaction, customer, &input, now)?;
     transaction
         .execute(
             "INSERT INTO business_workspace_customers
@@ -375,6 +371,78 @@ pub(crate) fn attach_customer_for_new_workspace(
         )
         .map_err(sql_error)?;
     Ok(customer)
+}
+
+fn fill_missing_customer_fields(
+    connection: &Connection,
+    current: BusinessCustomerRecord,
+    input: &BusinessCustomerInput,
+    now: i64,
+) -> Result<BusinessCustomerRecord, HostError> {
+    let input = normalize_customer_input(input.clone())?;
+    let mut merged = BusinessCustomerInput {
+        display_name: current.display_name.clone(),
+        legal_name: current.legal_name.clone(),
+        tax_id: current.tax_id.clone(),
+        billing_address: current.billing_address.clone(),
+        primary_contact_name: current.primary_contact_name.clone(),
+        primary_phone: current.primary_phone.clone(),
+        primary_email: current.primary_email.clone(),
+        notes: current.notes.clone(),
+    };
+    for (target, candidate) in [
+        (&mut merged.display_name, input.display_name),
+        (&mut merged.legal_name, input.legal_name),
+        (&mut merged.tax_id, input.tax_id),
+        (&mut merged.billing_address, input.billing_address),
+        (&mut merged.primary_contact_name, input.primary_contact_name),
+        (&mut merged.primary_phone, input.primary_phone),
+        (&mut merged.primary_email, input.primary_email),
+        (&mut merged.notes, input.notes),
+    ] {
+        if target.is_empty() && !candidate.is_empty() {
+            *target = candidate;
+        }
+    }
+    if merged.display_name == current.display_name
+        && merged.legal_name == current.legal_name
+        && merged.tax_id == current.tax_id
+        && merged.billing_address == current.billing_address
+        && merged.primary_contact_name == current.primary_contact_name
+        && merged.primary_phone == current.primary_phone
+        && merged.primary_email == current.primary_email
+        && merged.notes == current.notes
+    {
+        return Ok(current);
+    }
+    ensure_customer_identity_available(connection, &current.id, &merged)?;
+    connection
+        .execute(
+            "UPDATE business_customers
+             SET display_name = ?1, legal_name = ?2, tax_id = ?3, billing_address = ?4,
+                 primary_contact_name = ?5, primary_phone = ?6, primary_email = ?7,
+                 notes = ?8, display_name_key = ?9, legal_name_key = ?10,
+                 tax_id_key = ?11, revision = revision + 1, updated_at = ?12
+             WHERE id = ?13 AND revision = ?14",
+            params![
+                &merged.display_name,
+                &merged.legal_name,
+                &merged.tax_id,
+                &merged.billing_address,
+                &merged.primary_contact_name,
+                &merged.primary_phone,
+                &merged.primary_email,
+                &merged.notes,
+                normalized_name(&merged.display_name),
+                normalized_name(&merged.legal_name),
+                normalized_tax_id(&merged.tax_id),
+                now,
+                &current.id,
+                current.revision,
+            ],
+        )
+        .map_err(sql_error)?;
+    load_customer(connection, &current.id)
 }
 
 pub(crate) fn load_customer_for_workspace(

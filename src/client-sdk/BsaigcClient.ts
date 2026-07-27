@@ -23,6 +23,11 @@ import type { AssetCommandResponse } from "../generated/bsaigc/AssetCommandRespo
 import type { AssetDomainEvent } from "../generated/bsaigc/AssetDomainEvent";
 import type { AssetRecord } from "../generated/bsaigc/AssetRecord";
 import type { AssetSourceSelection } from "../generated/bsaigc/AssetSourceSelection";
+import type { BrainAttachmentPreview } from "../generated/bsaigc/BrainAttachmentPreview";
+import type { BrainDroppedItems } from "../generated/bsaigc/BrainDroppedItems";
+import type { BrainTurnContext } from "../generated/bsaigc/BrainTurnContext";
+import type { BrainWorkspaceSelection } from "../generated/bsaigc/BrainWorkspaceSelection";
+import type { StageClipboardImageRequest } from "../generated/bsaigc/StageClipboardImageRequest";
 import type { CreateTaskPayload } from "../generated/bsaigc/CreateTaskPayload";
 import type { TaskCommandEnvelope } from "../generated/bsaigc/TaskCommandEnvelope";
 import type { TaskCommandResponse } from "../generated/bsaigc/TaskCommandResponse";
@@ -558,6 +563,56 @@ export class BsaigcClient {
     return this.callHost(() => this.host.selectAssetSource());
   }
 
+  selectAssetSources(): Promise<AssetSourceSelection[]> {
+    return this.callHost(async () => {
+      if (this.host.selectAssetSources) return this.host.selectAssetSources();
+      const source = await this.host.selectAssetSource();
+      return source ? [source] : [];
+    });
+  }
+
+  selectBrainWorkspace(): Promise<BrainWorkspaceSelection | null> {
+    if (!this.host.selectBrainWorkspace) {
+      return Promise.reject(hostError(
+        "BRAIN_WORKSPACE_UNAVAILABLE",
+        "当前运行环境不支持选择工作区。",
+        false,
+      ));
+    }
+    return this.callHost(() => this.host.selectBrainWorkspace!());
+  }
+
+  registerBrainDroppedPaths(paths: string[]): Promise<BrainDroppedItems> {
+    if (!this.host.registerBrainDroppedPaths) {
+      return Promise.reject(hostError(
+        "BRAIN_DROP_UNAVAILABLE",
+        "当前运行环境不支持拖放本地文件。",
+        false,
+      ));
+    }
+    return this.callHost(() => this.host.registerBrainDroppedPaths!(paths));
+  }
+
+  stageClipboardImage(
+    request: StageClipboardImageRequest,
+  ): Promise<AssetSourceSelection> {
+    if (!this.host.stageClipboardImage) {
+      return Promise.reject(hostError(
+        "BRAIN_CLIPBOARD_UNAVAILABLE",
+        "当前运行环境不支持粘贴截图。",
+        false,
+      ));
+    }
+    return this.callHost(() => this.host.stageClipboardImage!(request));
+  }
+
+  getBrainAttachmentPreview(
+    assetId: string,
+  ): Promise<BrainAttachmentPreview | null> {
+    if (!this.host.getBrainAttachmentPreview) return Promise.resolve(null);
+    return this.callHost(() => this.host.getBrainAttachmentPreview!(assetId));
+  }
+
   importAsset(
     sourceToken: string,
     projectId: string | null,
@@ -687,9 +742,12 @@ export class BsaigcClient {
     });
   }
 
-  startBrainTurn(request: StartBrainTurnRequest): Promise<BrainTurnStartResult> {
+  startBrainTurn(
+    request: StartBrainTurnRequest,
+    context?: BrainTurnContext,
+  ): Promise<BrainTurnStartResult> {
     return this.callHost(async () => {
-      const result = await this.host.startBrainTurn(request);
+      const result = await this.host.startBrainTurn(request, context);
       this.brainProjection.upsertTurns([result.turn]);
       this.publish();
       return result;
@@ -1306,6 +1364,10 @@ export class BsaigcClient {
     return this.host.brainThreadArchive(threadId, archived);
   }
 
+  brainThreadRename(threadId: string, title: string): Promise<BrainThreadRecord> {
+    return this.host.brainThreadRename(threadId, title);
+  }
+
   brainThreadDelete(threadId: string): Promise<void> {
     return this.host.brainThreadDelete(threadId);
   }
@@ -1324,6 +1386,18 @@ export class BsaigcClient {
 
   authLogout(): Promise<AuthStatus> {
     return this.host.authLogout();
+  }
+
+  authRememberedCredentials(): Promise<AuthCredentials | null> {
+    return this.host.authRememberedCredentials();
+  }
+
+  authRememberCredentials(credentials: AuthCredentials): Promise<void> {
+    return this.host.authRememberCredentials(credentials);
+  }
+
+  authForgetCredentials(): Promise<void> {
+    return this.host.authForgetCredentials();
   }
 
   authChangePassword(payload: AuthChangePasswordPayload): Promise<AuthStatus> {

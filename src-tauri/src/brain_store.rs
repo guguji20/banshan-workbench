@@ -13,6 +13,7 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                 title TEXT,
                 model TEXT,
                 status TEXT NOT NULL,
+                title_overridden INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
@@ -33,7 +34,28 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                 ON brain_turns(thread_id, created_at ASC);
             "#,
         )
-        .map_err(sql_error)
+        .map_err(sql_error)?;
+    ensure_thread_title_override_column(connection)
+}
+
+fn ensure_thread_title_override_column(connection: &Connection) -> Result<(), HostError> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(brain_threads)")
+        .map_err(sql_error)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    if !columns.iter().any(|column| column == "title_overridden") {
+        connection
+            .execute(
+                "ALTER TABLE brain_threads ADD COLUMN title_overridden INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
 }
 
 pub fn upsert_thread(
@@ -48,7 +70,10 @@ pub fn upsert_thread(
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 project_id = COALESCE(excluded.project_id, brain_threads.project_id),
-                title = COALESCE(excluded.title, brain_threads.title),
+                title = CASE
+                    WHEN brain_threads.title_overridden = 1 THEN brain_threads.title
+                    ELSE COALESCE(excluded.title, brain_threads.title)
+                END,
                 model = COALESCE(excluded.model, brain_threads.model),
                 status = excluded.status,
                 updated_at = MAX(excluded.updated_at, brain_threads.updated_at)",
@@ -114,6 +139,30 @@ pub fn set_thread_status(
              SET status = ?2, updated_at = MAX(?3, updated_at)
              WHERE id = ?1",
             params![thread_id, thread_status_to_db(status), updated_at],
+        )
+        .map_err(sql_error)?;
+    if changed == 0 {
+        return Err(HostError::new(
+            "BRAIN_THREAD_NOT_FOUND",
+            "brain thread not found",
+            false,
+        ));
+    }
+    get_thread(connection, thread_id)
+}
+
+pub fn set_thread_title(
+    connection: &Connection,
+    thread_id: &str,
+    title: &str,
+    updated_at: i64,
+) -> Result<BrainThreadRecord, HostError> {
+    let changed = connection
+        .execute(
+            "UPDATE brain_threads
+             SET title = ?2, title_overridden = 1, updated_at = MAX(?3, updated_at)
+             WHERE id = ?1",
+            params![thread_id, title, updated_at],
         )
         .map_err(sql_error)?;
     if changed == 0 {
@@ -410,6 +459,20 @@ mod tests {
             1
         );
         assert_eq!(list_turns(&connection, "thread-1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn custom_thread_title_survives_remote_upserts() {
+        let connection = database();
+        let mut remote = thread();
+        upsert_thread(&connection, &remote).unwrap();
+        let renamed = set_thread_title(&connection, &remote.id, "客户报价讨论", 2).unwrap();
+        assert_eq!(renamed.title.as_deref(), Some("客户报价讨论"));
+
+        remote.title = Some("Remote generated title".to_string());
+        remote.updated_at = 3;
+        let refreshed = upsert_thread(&connection, &remote).unwrap();
+        assert_eq!(refreshed.title.as_deref(), Some("客户报价讨论"));
     }
 
     #[test]

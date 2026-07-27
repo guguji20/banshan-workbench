@@ -788,6 +788,17 @@ class FakeHostAdapter implements HostAdapter {
       updatedAt: 0,
     } as import("../generated/bsaigc/BrainThreadRecord").BrainThreadRecord);
   }
+  brainThreadRename(threadId: string, title: string) {
+    return Promise.resolve({
+      id: threadId,
+      projectId: null,
+      title,
+      model: null,
+      status: "ready",
+      createdAt: 0,
+      updatedAt: 0,
+    } as import("../generated/bsaigc/BrainThreadRecord").BrainThreadRecord);
+  }
   brainThreadDelete(_threadId: string) {
     return Promise.resolve();
   }
@@ -809,6 +820,15 @@ class FakeHostAdapter implements HostAdapter {
   }
   authLogout() {
     return this.authStatus();
+  }
+  authRememberedCredentials() {
+    return Promise.resolve(null);
+  }
+  authRememberCredentials() {
+    return Promise.resolve();
+  }
+  authForgetCredentials() {
+    return Promise.resolve();
   }
   authChangePassword() {
     return this.authStatus();

@@ -153,7 +153,7 @@ function Find-Secrets([string]$RelativePath, [byte[]]$Bytes) {
 }
 
 function Get-SourceInventory {
-  $excludedRoots = @('.git', 'node_modules', 'dist', 'src-tauri/target', 'release', '.runtime', 'upstream')
+  $excludedRoots = @('.git', 'node_modules', 'dist', 'src-tauri/target', 'release', '.runtime', 'upstream', '_upload')
   $compiledExtensions = @('.exe', '.dll', '.pdb', '.lib', '.so', '.dylib', '.node', '.wasm', '.msi')
   $archiveExtensions = @('.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz')
   $threshold = [int64]$LargeBinaryThresholdMiB * 1MB
@@ -188,6 +188,10 @@ function Get-SourceInventory {
       $relative = Get-RelativePath $file.FullName
       if (($OutputRootInsideRepo -and (Test-UnderPath $file.FullName $OutputRoot)) -or (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
         $excluded.Add([pscustomobject][ordered]@{ relativePath = $relative; reason = 'output-or-reparse-point'; kind = 'file'; size = $file.Length })
+        continue
+      }
+      if (-not $tracked.ContainsKey($relative) -and -not $untrackedSet.ContainsKey($relative)) {
+        $excluded.Add([pscustomobject][ordered]@{ relativePath = $relative; reason = 'git-ignored-or-unmanaged'; kind = 'file'; size = $file.Length })
         continue
       }
       $leaf = $file.Name.ToLowerInvariant()
@@ -294,7 +298,7 @@ try {
   $untrackedIncluded = @($untrackedSet.Keys | Where-Object { $includedPaths.ContainsKey($_) } | Sort-Object)
   $untrackedText = if ($untrackedIncluded.Count -gt 0) { ($untrackedIncluded -join "`n") + "`n" } else { '' }
 
-  $pathspecs = @('.', ':(exclude).git/**', ':(exclude)node_modules/**', ':(exclude)dist/**', ':(exclude)src-tauri/target/**', ':(exclude)release/**', ':(exclude).runtime/**', ':(exclude)upstream/**')
+  $pathspecs = @('.', ':(exclude).git/**', ':(exclude)node_modules/**', ':(exclude)dist/**', ':(exclude)src-tauri/target/**', ':(exclude)release/**', ':(exclude).runtime/**', ':(exclude)upstream/**', ':(exclude)_upload/**')
   foreach ($excluded in $inventory.excluded) {
     if ($excluded.kind -eq 'file') { $pathspecs += (':(exclude)' + $excluded.relativePath) }
   }

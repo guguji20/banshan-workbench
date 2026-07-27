@@ -1,18 +1,28 @@
-import { useLayoutEffect, useRef } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ClipboardEvent, FormEvent, KeyboardEvent } from "react";
 import {
   AlertCircle,
   Bot,
   Circle,
+  FileImage,
+  FileText,
+  Folder,
+  FolderOpen,
+  HardDrive,
   LoaderCircle,
   MessageSquareText,
-  Paperclip,
   Plus,
   RefreshCw,
   Send,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
   Square,
+  X,
   WifiOff,
 } from "lucide-react";
+import type { AssetKind } from "../generated/bsaigc/AssetKind";
+import type { BrainAccessMode } from "../generated/bsaigc/BrainAccessMode";
 import type { BrainThreadRecord } from "../generated/bsaigc/BrainThreadRecord";
 import type { BrainThreadStatus } from "../generated/bsaigc/BrainThreadStatus";
 import type { BrainTurnRecord } from "../generated/bsaigc/BrainTurnRecord";
@@ -35,6 +45,20 @@ export interface BrainModelOption {
   available?: boolean;
 }
 
+export interface BrainAttachment {
+  assetId: string;
+  displayName: string;
+  kind: AssetKind;
+  mimeType: string;
+  sizeBytes: number;
+  previewUrl: string | null;
+}
+
+export interface BrainWorkspace {
+  workspaceToken: string;
+  displayName: string;
+}
+
 export interface BrainCenterProps {
   threads: readonly BrainThreadRecord[];
   turns: readonly BrainTurnRecord[];
@@ -43,11 +67,15 @@ export interface BrainCenterProps {
   models: readonly BrainModelOption[];
   selectedModel: string;
   draft: string;
+  attachments?: readonly BrainAttachment[];
+  workspace?: BrainWorkspace | null;
+  accessMode?: BrainAccessMode;
   streamingDelta?: string;
   isLoadingThreads?: boolean;
   isLoadingTurns?: boolean;
   isStartingThread?: boolean;
   isSending?: boolean;
+  isAttaching?: boolean;
   isDegraded?: boolean;
   degradedReason?: string | null;
   error?: string | null;
@@ -58,6 +86,12 @@ export interface BrainCenterProps {
   onSend: () => void;
   onInterrupt: () => void;
   onAttach?: () => void;
+  onRemoveAttachment?: (assetId: string) => void;
+  onSelectWorkspace?: () => void;
+  onClearWorkspace?: () => void;
+  onAccessModeChange?: (mode: BrainAccessMode) => void;
+  onDropPaths?: (paths: string[]) => void;
+  onPasteImages?: (files: File[]) => void;
   onNewThread: () => void;
   onReload?: () => void;
 }
@@ -78,6 +112,46 @@ const TURN_STATUS: Record<BrainTurnStatus, string> = {
   interrupted: "已中断",
   failed: "失败",
 };
+
+const ACCESS_OPTIONS: ReadonlyArray<{
+  mode: BrainAccessMode;
+  label: string;
+  detail: string;
+}> = [
+  {
+    mode: "requestApproval",
+    label: "请求批准",
+    detail: "编辑工作区和联网操作会先询问",
+  },
+  {
+    mode: "autoApprove",
+    label: "替我审批",
+    detail: "仅检测到风险操作时请求批准",
+  },
+  {
+    mode: "fullAccess",
+    label: "完全访问",
+    detail: "可不受限制地访问电脑文件和互联网",
+  },
+];
+
+function formatFileSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentIcon({ kind }: { kind: AssetKind }) {
+  if (kind === "image") return <FileImage size={17} aria-hidden="true" />;
+  if (kind === "document") return <FileText size={17} aria-hidden="true" />;
+  return <HardDrive size={17} aria-hidden="true" />;
+}
+
+function AccessIcon({ mode }: { mode: BrainAccessMode }) {
+  if (mode === "fullAccess") return <ShieldAlert size={14} aria-hidden="true" />;
+  if (mode === "autoApprove") return <ShieldCheck size={14} aria-hidden="true" />;
+  return <ShieldQuestion size={14} aria-hidden="true" />;
+}
 
 function formatTime(value: number): string {
   const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
@@ -139,11 +213,15 @@ export function BrainCenter({
   models,
   selectedModel,
   draft,
+  attachments = [],
+  workspace = null,
+  accessMode = "requestApproval",
   streamingDelta = "",
   isLoadingThreads = false,
   isLoadingTurns = false,
   isStartingThread = false,
   isSending = false,
+  isAttaching = false,
   isDegraded = false,
   degradedReason = null,
   error = null,
@@ -154,12 +232,25 @@ export function BrainCenter({
   onSend,
   onInterrupt,
   onAttach,
+  onRemoveAttachment,
+  onSelectWorkspace,
+  onClearWorkspace,
+  onAccessModeChange,
+  onDropPaths,
+  onPasteImages,
   onNewThread,
   onReload,
 }: BrainCenterProps) {
   const historyRef = useRef<HTMLDivElement>(null);
+  const draftInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const accessMenuRef = useRef<HTMLDivElement>(null);
   const followsLatestRef = useRef(true);
   const previousThreadIdRef = useRef<string | null | undefined>(undefined);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [accessMenuOpen, setAccessMenuOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const selectedThread =
     threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const selectedTurns = selectedThreadId
@@ -183,7 +274,8 @@ export function BrainCenter({
     !isRunning &&
     !isDegraded &&
     !isStartingThread &&
-    draft.trim().length > 0 &&
+    !isAttaching &&
+    (draft.trim().length > 0 || attachments.length > 0) &&
     selectedModel.length > 0;
 
   function scrollHistoryToBottom(reason: BrainScrollReason) {
@@ -228,6 +320,67 @@ export function BrainCenter({
     isLoadingTurns,
   ]);
 
+  useLayoutEffect(() => {
+    const textarea = draftInputRef.current;
+    if (!textarea) return;
+
+    const resizeDraftInput = () => {
+      textarea.style.height = "auto";
+      const maxHeight = Math.min(320, Math.max(140, window.innerHeight * 0.44));
+      const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+      textarea.style.height = `${nextHeight}px`;
+      textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+    };
+
+    resizeDraftInput();
+    window.addEventListener("resize", resizeDraftInput);
+    return () => window.removeEventListener("resize", resizeDraftInput);
+  }, [draft]);
+
+  useEffect(() => {
+    const closeMenus = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!attachmentMenuRef.current?.contains(target)) setAttachmentMenuOpen(false);
+      if (!accessMenuRef.current?.contains(target)) setAccessMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeMenus);
+    return () => document.removeEventListener("pointerdown", closeMenus);
+  }, []);
+
+  useEffect(() => {
+    if (!onDropPaths) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/webviewWindow")
+      .then(({ getCurrentWebviewWindow }) =>
+        getCurrentWebviewWindow().onDragDropEvent((event) => {
+          if (event.payload.type === "over") {
+            setDragActive(true);
+            return;
+          }
+          if (event.payload.type === "leave") {
+            setDragActive(false);
+            return;
+          }
+          setDragActive(false);
+          if (event.payload.type === "drop" && event.payload.paths.length > 0) {
+            onDropPaths(event.payload.paths);
+          }
+        }),
+      )
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      })
+      .catch(() => {
+        // The web preview has no native drag-drop event bridge.
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [onDropPaths]);
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     sendCurrentDraft();
@@ -243,6 +396,17 @@ export function BrainCenter({
       event.preventDefault();
       sendCurrentDraft();
     }
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!onPasteImages) return;
+    const images = Array.from(event.clipboardData?.items ?? [])
+      .filter((item) => item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (images.length === 0) return;
+    event.preventDefault();
+    onPasteImages(images.slice(0, 5));
   }
 
   return (
@@ -476,80 +640,211 @@ export function BrainCenter({
           )}
         </div>
 
-        <form className="brain-center__composer" onSubmit={submit}>
-          <div className="brain-center__composer-toolbar">
-            <div className="brain-center__composer-tools">
-              {onAttach && (
-                <button
-                  type="button"
-                  className="brain-center__attachment-button"
-                  onClick={onAttach}
-                  disabled={isRunning || isDegraded}
-                  title="添加附件"
-                  aria-label="添加附件"
-                >
-                  <Paperclip size={15} />
-                </button>
-              )}
-              <label className="brain-center__model-control">
-                <span>模型</span>
-                <select
-                  value={selectedModel}
-                  onChange={(event) => onModelChange(event.currentTarget.value)}
-                  disabled={isRunning || isDegraded || models.length === 0}
-                  aria-label="选择模型"
-                >
-                  {models.length === 0 && <option value="">暂无可用模型</option>}
-                  {models.map((model) => (
-                    <option
-                      key={model.id}
-                      value={model.id}
-                      disabled={model.available === false}
-                    >
-                      {model.label}{model.available === false ? "（不可用）" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <span className="brain-center__draft-count">{draft.length}</span>
-          </div>
-          <div className="brain-center__composer-main">
-            <textarea
-              value={draft}
-              onChange={(event) => onDraftChange(event.currentTarget.value)}
-              onKeyDown={handleDraftKeyDown}
-              disabled={isDegraded}
-              placeholder={isDegraded ? "智能助手暂不可用" : "输入消息或任务"}
-              rows={3}
-              aria-label="消息内容"
-            />
-            {isRunning ? (
-              <button
-                type="button"
-                className="brain-center__send-button brain-center__send-button--stop"
-                onClick={onInterrupt}
-                disabled={!selectedTurns.some((turn) => turn.status === "running")}
-                title={
-                  selectedTurns.some((turn) => turn.status === "running")
-                    ? "中断当前回复"
-                    : "当前没有可中断的回复，请稍候或新建对话"
-                }
-                aria-label="中断当前回复"
-              >
-                <Square size={15} fill="currentColor" />
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className="brain-center__send-button"
-                disabled={!canSend}
-                title="发送消息"
-                aria-label="发送消息"
-              >
-                <Send size={16} />
-              </button>
+        <form
+          ref={composerRef}
+          className={`brain-center__composer${dragActive ? " is-drag-active" : ""}`}
+          onSubmit={submit}
+        >
+          <div className="brain-center__composer-surface">
+            {attachments.length > 0 && (
+              <div className="brain-center__attachments" aria-label="待发送附件">
+                {attachments.map((attachment) => (
+                  <div className="brain-center__attachment-card" key={attachment.assetId}>
+                    {attachment.kind === "image" && attachment.previewUrl ? (
+                      <img src={attachment.previewUrl} alt="" />
+                    ) : (
+                      <span className="brain-center__attachment-icon">
+                        <AttachmentIcon kind={attachment.kind} />
+                      </span>
+                    )}
+                    <span className="brain-center__attachment-copy">
+                      <strong title={attachment.displayName}>{attachment.displayName}</strong>
+                      <small>{attachment.kind === "image" ? "图片" : attachment.mimeType} · {formatFileSize(attachment.sizeBytes)}</small>
+                    </span>
+                    {onRemoveAttachment && (
+                      <button
+                        type="button"
+                        className="brain-center__attachment-remove"
+                        onClick={() => onRemoveAttachment(attachment.assetId)}
+                        disabled={isRunning || isAttaching}
+                        title={`移除 ${attachment.displayName}`}
+                        aria-label={`移除 ${attachment.displayName}`}
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
+
+            <div className="brain-center__composer-main">
+              <textarea
+                ref={draftInputRef}
+                value={draft}
+                onChange={(event) => onDraftChange(event.currentTarget.value)}
+                onKeyDown={handleDraftKeyDown}
+                onPaste={handlePaste}
+                disabled={isDegraded}
+                placeholder={
+                  isDegraded
+                    ? "智能助手暂不可用"
+                    : attachments.length > 0
+                      ? "为附件补充说明"
+                      : "输入消息或任务"
+                }
+                rows={1}
+                aria-label="消息内容"
+              />
+            </div>
+
+            <div className="brain-center__composer-footer">
+              <div className="brain-center__composer-tools">
+                {(onAttach || onSelectWorkspace) && (
+                  <div className="brain-center__menu-anchor" ref={attachmentMenuRef}>
+                    <button
+                      type="button"
+                      className="brain-center__attachment-button"
+                      onClick={() => setAttachmentMenuOpen((current) => !current)}
+                      disabled={isRunning || isDegraded || isAttaching}
+                      title="添加文件或工作区"
+                      aria-label="添加文件或工作区"
+                      aria-expanded={attachmentMenuOpen}
+                    >
+                      {isAttaching ? <LoaderCircle size={16} className="brain-center__spin" /> : <Plus size={17} />}
+                    </button>
+                    {attachmentMenuOpen && (
+                      <div className="brain-center__composer-menu" role="menu">
+                        {onAttach && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAttachmentMenuOpen(false);
+                              onAttach();
+                            }}
+                          >
+                            <FileText size={15} aria-hidden="true" />
+                            <span><strong>文件</strong><small>选择一个或多个文件</small></span>
+                          </button>
+                        )}
+                        {onSelectWorkspace && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAttachmentMenuOpen(false);
+                              onSelectWorkspace();
+                            }}
+                          >
+                            <FolderOpen size={15} aria-hidden="true" />
+                            <span><strong>工作区文件夹</strong><small>让助手在选中目录内执行</small></span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="brain-center__menu-anchor" ref={accessMenuRef}>
+                  <button
+                    type="button"
+                    className={`brain-center__access-button brain-center__access-button--${accessMode}`}
+                    onClick={() => setAccessMenuOpen((current) => !current)}
+                    disabled={isRunning || isDegraded}
+                    aria-expanded={accessMenuOpen}
+                  >
+                    <AccessIcon mode={accessMode} />
+                    <span>{ACCESS_OPTIONS.find((option) => option.mode === accessMode)?.label}</span>
+                  </button>
+                  {accessMenuOpen && onAccessModeChange && (
+                    <div className="brain-center__composer-menu brain-center__composer-menu--access" role="menu">
+                      {ACCESS_OPTIONS.map((option) => (
+                        <button
+                          key={option.mode}
+                          type="button"
+                          className={option.mode === accessMode ? "is-selected" : undefined}
+                          onClick={() => {
+                            onAccessModeChange(option.mode);
+                            setAccessMenuOpen(false);
+                          }}
+                        >
+                          <AccessIcon mode={option.mode} />
+                          <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+                          {option.mode === accessMode && <span className="brain-center__menu-check">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {workspace && (
+                  <span className="brain-center__workspace-chip" title="当前 Codex 工作区">
+                    <Folder size={14} aria-hidden="true" />
+                    <span>{workspace.displayName}</span>
+                    {onClearWorkspace && (
+                      <button
+                        type="button"
+                        onClick={onClearWorkspace}
+                        disabled={isRunning}
+                        aria-label="移除工作区"
+                        title="移除工作区"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              <div className="brain-center__composer-meta">
+                <label className="brain-center__model-control">
+                  <span>模型</span>
+                  <select
+                    value={selectedModel}
+                    onChange={(event) => onModelChange(event.currentTarget.value)}
+                    disabled={isRunning || isDegraded || models.length === 0}
+                    aria-label="选择模型"
+                  >
+                    {models.length === 0 && <option value="">暂无可用模型</option>}
+                    {models.map((model) => (
+                      <option
+                        key={model.id}
+                        value={model.id}
+                        disabled={model.available === false}
+                      >
+                        {model.label}{model.available === false ? "（不可用）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="brain-center__draft-count">{draft.length}</span>
+                {isRunning ? (
+                  <button
+                    type="button"
+                    className="brain-center__send-button brain-center__send-button--stop"
+                    onClick={onInterrupt}
+                    disabled={!selectedTurns.some((turn) => turn.status === "running")}
+                    title={
+                      selectedTurns.some((turn) => turn.status === "running")
+                        ? "中断当前回复"
+                        : "当前没有可中断的回复，请稍候或新建对话"
+                    }
+                    aria-label="中断当前回复"
+                  >
+                    <Square size={15} fill="currentColor" />
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className="brain-center__send-button"
+                    disabled={!canSend}
+                    title="发送消息"
+                    aria-label="发送消息"
+                  >
+                    <Send size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </form>
       </div>

@@ -113,6 +113,10 @@ describe("DesktopHostAdapter contract review and backup wiring", () => {
     await adapter.getAssetActionCapabilities("asset-report");
     await adapter.openAsset("asset-report");
     await adapter.exportAsset("asset-report");
+    await adapter.authRememberedCredentials();
+    await adapter.authRememberCredentials({ username: "member", password: "secret" });
+    await adapter.authForgetCredentials();
+    await adapter.brainThreadRename("thread-1", "客户报价讨论");
 
     expect(tauriMocks.invoke.mock.calls).toEqual([
       ["execute_contract_review_command", { command: contractCommand }],
@@ -131,6 +135,13 @@ describe("DesktopHostAdapter contract review and backup wiring", () => {
       ["get_asset_action_capabilities", { assetId: "asset-report" }],
       ["open_asset", { assetId: "asset-report" }],
       ["export_asset", { assetId: "asset-report" }],
+      ["auth_remembered_credentials"],
+      [
+        "auth_remember_credentials",
+        { credentials: { username: "member", password: "secret" } },
+      ],
+      ["auth_forget_credentials"],
+      ["brain_thread_rename", { threadId: "thread-1", title: "客户报价讨论" }],
     ]);
   });
 

@@ -110,6 +110,10 @@ export class WebHostAdapter implements HostAdapter {
     return Promise.reject(this.unavailable());
   }
 
+  brainThreadRename(_threadId: string, _title: string): Promise<BrainThreadRecord> {
+    return Promise.reject(this.unavailable());
+  }
+
   brainThreadDelete(_threadId: string): Promise<void> {
     return Promise.reject(this.unavailable());
   }
@@ -128,6 +132,18 @@ export class WebHostAdapter implements HostAdapter {
 
   authLogout(): Promise<AuthStatus> {
     return Promise.reject(this.unavailable());
+  }
+
+  authRememberedCredentials(): Promise<AuthCredentials | null> {
+    return Promise.resolve(null);
+  }
+
+  authRememberCredentials(_credentials: AuthCredentials): Promise<void> {
+    return Promise.reject(this.unavailable());
+  }
+
+  authForgetCredentials(): Promise<void> {
+    return Promise.resolve();
   }
 
   authChangePassword(_payload: AuthChangePasswordPayload): Promise<AuthStatus> {

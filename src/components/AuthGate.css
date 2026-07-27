@@ -1,4 +1,9 @@
 /* Full-screen login gate, following the shell's warm-green design language. */
+.auth-gate,
+.auth-gate * {
+  box-sizing: border-box;
+}
+
 .auth-gate {
   position: fixed;
   inset: 0;
@@ -61,6 +66,7 @@
   font-weight: 620;
 }
 .auth-gate__field input {
+  width: 100%;
   height: 38px;
   padding: 0 12px;
   border: 1px solid rgba(33, 51, 46, 0.16);
@@ -72,10 +78,61 @@
   outline: none;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
+.auth-gate__password {
+  position: relative;
+  min-width: 0;
+}
+.auth-gate__password input {
+  padding-right: 42px;
+}
+.auth-gate__password > button {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 6px;
+  color: #6c7a75;
+  background: transparent;
+  cursor: pointer;
+}
+.auth-gate__password > button:hover:not(:disabled) {
+  color: #21332e;
+  background: rgba(15, 118, 110, 0.08);
+}
+.auth-gate__password > button:disabled {
+  cursor: not-allowed;
+}
 .auth-gate__field input:focus {
   border-color: #0f766e;
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
   background: #fff;
+}
+.auth-gate__remember {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  color: #3c4d47;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.auth-gate__remember input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+.auth-gate__remember input:disabled {
+  cursor: not-allowed;
 }
 .auth-gate__error {
   padding: 8px 11px;

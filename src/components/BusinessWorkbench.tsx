@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import type { LucideIcon } from "lucide-react";
 import {
   Archive,
+  Check,
   ChartNoAxesCombined,
   Ellipsis,
   ChevronRight,
@@ -14,6 +15,7 @@ import {
   LayoutDashboard,
   ListTodo,
   LoaderCircle,
+  LogOut,
   Menu,
   MessageSquareText,
   MonitorCog,
@@ -21,6 +23,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Plus,
   ReceiptText,
   RefreshCw,
@@ -35,7 +38,12 @@ import type { BusinessWorkspaceRecord } from "../generated/bsaigc/BusinessWorksp
 import type { ProjectStage } from "../generated/bsaigc/ProjectStage";
 import type { TaskRecord } from "../generated/bsaigc/TaskRecord";
 import { AssetVault } from "./AssetVault";
-import { BrainCenter } from "./BrainCenter";
+import {
+  BrainCenter,
+  type BrainAttachment,
+  type BrainWorkspace,
+} from "./BrainCenter";
+import type { BrainAccessMode } from "../generated/bsaigc/BrainAccessMode";
 import { CaseLibrary } from "./CaseLibrary";
 import { ExecutionBriefCenter } from "./ExecutionBriefCenter";
 import { friendlyBrainThreadTitle } from "./brainPresentation";
@@ -62,8 +70,19 @@ export type BusinessWorkbenchProps = DesktopShellProps &
     quoteHistorySources: readonly QuoteHistorySource[];
     contractAgentFindings: readonly ReviewFindingRecord[];
     onArchiveBrainThread: (threadId: string, archived: boolean) => void;
+    onRenameBrainThread: (threadId: string, title: string) => void;
     onDeleteBrainThread: (threadId: string) => void;
     onBrainAttach?: () => void;
+    brainAttachments?: readonly BrainAttachment[];
+    brainWorkspace?: BrainWorkspace | null;
+    brainAccessMode?: BrainAccessMode;
+    isBrainAttaching?: boolean;
+    onRemoveBrainAttachment?: (assetId: string) => void;
+    onSelectBrainWorkspace?: () => void;
+    onClearBrainWorkspace?: () => void;
+    onBrainAccessModeChange?: (mode: BrainAccessMode) => void;
+    onBrainDropPaths?: (paths: string[]) => void;
+    onBrainPasteImages?: (files: File[]) => void;
     businessWorkspaceEvents: readonly BusinessWorkspaceDomainEvent[];
     businessBusyAction: string | null;
     businessCustomers: readonly BusinessCustomerReceivableSummary[];
@@ -71,6 +90,7 @@ export type BusinessWorkbenchProps = DesktopShellProps &
     businessCustomersError: string | null;
     businessCustomerQuery: string;
     onOpenSettings: () => void;
+    onLogout: () => void;
     onBusinessCustomerQueryChange: (query: string) => void;
     onRefreshBusinessCustomers: () => void;
     onSelectBusinessCustomer: (
@@ -278,6 +298,8 @@ export function BusinessWorkbench(props: BusinessWorkbenchProps) {
 
   const [threadMenuId, setThreadMenuId] = useState<string | null>(null);
   const [threadDeleteConfirmId, setThreadDeleteConfirmId] = useState<string | null>(null);
+  const [threadRenameId, setThreadRenameId] = useState<string | null>(null);
+  const [threadRenameDraft, setThreadRenameDraft] = useState("");
 
   useEffect(() => {
     if (!threadMenuId) return;
@@ -288,6 +310,15 @@ export function BusinessWorkbench(props: BusinessWorkbenchProps) {
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [threadMenuId]);
+
+  const submitThreadRename = (event: FormEvent<HTMLFormElement>, threadId: string) => {
+    event.preventDefault();
+    const title = threadRenameDraft.trim();
+    if (!title) return;
+    props.onRenameBrainThread(threadId, title);
+    setThreadRenameId(null);
+    setThreadRenameDraft("");
+  };
 
   const recentBrainThreads = useMemo(
     () =>
@@ -394,11 +425,15 @@ export function BusinessWorkbench(props: BusinessWorkbenchProps) {
       models={props.brainModels}
       selectedModel={props.selectedBrainModel}
       draft={props.brainDraft}
+      attachments={props.brainAttachments}
+      workspace={props.brainWorkspace}
+      accessMode={props.brainAccessMode}
       streamingDelta={props.brainStreamingDelta}
       isLoadingThreads={props.isLoading || props.isLoadingBrainThreads}
       isLoadingTurns={props.isLoadingBrainTurns}
       isStartingThread={props.isStartingBrainThread}
       isSending={props.isSendingBrainTurn}
+      isAttaching={props.isBrainAttaching}
       isDegraded={brainDegraded}
       degradedReason={
         brainDegraded ? "智能助手暂时无法使用，历史记录仍可查看。" : null
@@ -407,6 +442,12 @@ export function BusinessWorkbench(props: BusinessWorkbenchProps) {
       showThreadList={false}
       onSelectThread={props.onSelectBrainThread}
       onAttach={props.onBrainAttach}
+      onRemoveAttachment={props.onRemoveBrainAttachment}
+      onSelectWorkspace={props.onSelectBrainWorkspace}
+      onClearWorkspace={props.onClearBrainWorkspace}
+      onAccessModeChange={props.onBrainAccessModeChange}
+      onDropPaths={props.onBrainDropPaths}
+      onPasteImages={props.onBrainPasteImages}
       onModelChange={props.onBrainModelChange}
       onDraftChange={props.onBrainDraftChange}
       onSend={props.onSendBrainTurn}
@@ -467,6 +508,15 @@ export function BusinessWorkbench(props: BusinessWorkbenchProps) {
             title="设置"
           >
             <Settings2 size={16} />
+          </button>
+          <button
+            type="button"
+            className="business-workbench__topbar-button is-logout"
+            onClick={props.onLogout}
+            aria-label="退出账号"
+            title="退出账号"
+          >
+            <LogOut size={16} />
           </button>
           {selectedProject && activeSection !== "workspace" && (
             <button
@@ -636,74 +686,130 @@ export function BusinessWorkbench(props: BusinessWorkbenchProps) {
                   recentBrainThreads.map((thread) => {
                     const active = thread.id === props.selectedBrainThreadId;
                     const menuOpen = threadMenuId === thread.id;
+                    const renaming = threadRenameId === thread.id;
                     const title = friendlyBrainThreadTitle(thread.title);
                     return (
                       <div
                         key={thread.id}
                         className={`business-workbench__thread-item ${active ? "is-active" : ""} ${menuOpen ? "is-menu-open" : ""}`}
                       >
-                        <button
-                          type="button"
-                          className="business-workbench__thread-open"
-                          onClick={() => props.onSelectBrainThread(thread.id)}
-                          aria-pressed={active}
-                          title={title}
-                        >
-                          <MessageSquareText size={14} strokeWidth={1.7} aria-hidden="true" />
-                          <span>{title}</span>
-                          <span
-                            className={`business-workbench__thread-status is-${thread.status}`}
-                            aria-hidden="true"
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          className="business-workbench__thread-menu-trigger"
-                          aria-label={`对话「${title}」操作`}
-                          aria-expanded={menuOpen}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setThreadMenuId(menuOpen ? null : thread.id);
-                            setThreadDeleteConfirmId(null);
-                          }}
-                        >
-                          <Ellipsis size={14} />
-                        </button>
-                        {menuOpen && (
-                          <div
-                            className="business-workbench__thread-menu"
-                            role="menu"
-                            onClick={(event) => event.stopPropagation()}
+                        {renaming ? (
+                          <form
+                            className="business-workbench__thread-rename"
+                            onSubmit={(event) => submitThreadRename(event, thread.id)}
                           >
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                props.onArchiveBrainThread(thread.id, true);
-                                setThreadMenuId(null);
-                              }}
-                            >
-                              <Archive size={13} />
-                              归档对话
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="is-danger"
-                              onClick={() => {
-                                if (threadDeleteConfirmId === thread.id) {
-                                  props.onDeleteBrainThread(thread.id);
-                                  setThreadMenuId(null);
-                                  setThreadDeleteConfirmId(null);
-                                } else {
-                                  setThreadDeleteConfirmId(thread.id);
+                            <input
+                              value={threadRenameDraft}
+                              onChange={(event) => setThreadRenameDraft(event.currentTarget.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") {
+                                  setThreadRenameId(null);
+                                  setThreadRenameDraft("");
                                 }
                               }}
+                              maxLength={240}
+                              aria-label="对话名称"
+                              autoFocus
+                            />
+                            <button
+                              type="submit"
+                              disabled={!threadRenameDraft.trim()}
+                              aria-label="保存名称"
+                              title="保存"
                             >
-                              <Trash2 size={13} />
-                              {threadDeleteConfirmId === thread.id ? "再点一次确认删除" : "删除对话"}
+                              <Check size={13} />
                             </button>
-                          </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setThreadRenameId(null);
+                                setThreadRenameDraft("");
+                              }}
+                              aria-label="取消重命名"
+                              title="取消"
+                            >
+                              <X size={13} />
+                            </button>
+                          </form>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="business-workbench__thread-open"
+                              onClick={() => props.onSelectBrainThread(thread.id)}
+                              aria-pressed={active}
+                              title={title}
+                            >
+                              <MessageSquareText size={14} strokeWidth={1.7} aria-hidden="true" />
+                              <span>{title}</span>
+                              <span
+                                className={`business-workbench__thread-status is-${thread.status}`}
+                                aria-hidden="true"
+                              />
+                            </button>
+                            <button
+                              type="button"
+                              className="business-workbench__thread-menu-trigger"
+                              aria-label={`对话「${title}」操作`}
+                              aria-expanded={menuOpen}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setThreadMenuId(menuOpen ? null : thread.id);
+                                setThreadDeleteConfirmId(null);
+                              }}
+                            >
+                              <Ellipsis size={14} />
+                            </button>
+                            {menuOpen && (
+                              <div
+                                className="business-workbench__thread-menu"
+                                role="menu"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setThreadRenameId(thread.id);
+                                    setThreadRenameDraft(title);
+                                    setThreadMenuId(null);
+                                    setThreadDeleteConfirmId(null);
+                                  }}
+                                >
+                                  <Pencil size={13} />
+                                  重命名
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    props.onArchiveBrainThread(thread.id, true);
+                                    setThreadMenuId(null);
+                                  }}
+                                >
+                                  <Archive size={13} />
+                                  归档对话
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="is-danger"
+                                  onClick={() => {
+                                    if (threadDeleteConfirmId === thread.id) {
+                                      props.onDeleteBrainThread(thread.id);
+                                      setThreadMenuId(null);
+                                      setThreadDeleteConfirmId(null);
+                                    } else {
+                                      setThreadDeleteConfirmId(thread.id);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                  {threadDeleteConfirmId === thread.id ? "再点一次确认删除" : "删除对话"}
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     );

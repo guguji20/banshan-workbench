@@ -1,0 +1,8 @@
+{
+  "accountId": "your-cloudflare-account-id",
+  "bucket": "banshan-backup",
+  "accessKeyId": "your-r2-access-key-id",
+  "secretAccessKey": "your-r2-secret-access-key",
+  "endpoint": "https://your-account-id.r2.cloudflarestorage.com",
+  "updateManifestUrl": "https://your-public-release-domain/version.json"
+}

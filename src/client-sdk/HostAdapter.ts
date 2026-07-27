@@ -18,6 +18,11 @@ import type { AssetCommandResponse } from "../generated/bsaigc/AssetCommandRespo
 import type { AssetDomainEvent } from "../generated/bsaigc/AssetDomainEvent";
 import type { AssetRecord } from "../generated/bsaigc/AssetRecord";
 import type { AssetSourceSelection } from "../generated/bsaigc/AssetSourceSelection";
+import type { BrainAttachmentPreview } from "../generated/bsaigc/BrainAttachmentPreview";
+import type { BrainDroppedItems } from "../generated/bsaigc/BrainDroppedItems";
+import type { BrainTurnContext } from "../generated/bsaigc/BrainTurnContext";
+import type { BrainWorkspaceSelection } from "../generated/bsaigc/BrainWorkspaceSelection";
+import type { StageClipboardImageRequest } from "../generated/bsaigc/StageClipboardImageRequest";
 import type { TaskCommandEnvelope } from "../generated/bsaigc/TaskCommandEnvelope";
 import type { TaskCommandResponse } from "../generated/bsaigc/TaskCommandResponse";
 import type { TaskDomainEvent } from "../generated/bsaigc/TaskDomainEvent";
@@ -159,6 +164,15 @@ export interface HostAdapter {
   listTasks(): Promise<TaskRecord[]>;
   replayTaskEvents(afterSequence: number, limit: number): Promise<TaskDomainEvent[]>;
   selectAssetSource(): Promise<AssetSourceSelection | null>;
+  selectAssetSources?(): Promise<AssetSourceSelection[]>;
+  selectBrainWorkspace?(): Promise<BrainWorkspaceSelection | null>;
+  registerBrainDroppedPaths?(paths: string[]): Promise<BrainDroppedItems>;
+  stageClipboardImage?(
+    request: StageClipboardImageRequest,
+  ): Promise<AssetSourceSelection>;
+  getBrainAttachmentPreview?(
+    assetId: string,
+  ): Promise<BrainAttachmentPreview | null>;
   executeAssetCommand(command: AssetCommandEnvelope): Promise<AssetCommandResponse>;
   listAssets(): Promise<AssetRecord[]>;
   replayAssetEvents(afterSequence: number, limit: number): Promise<AssetDomainEvent[]>;
@@ -170,7 +184,10 @@ export interface HostAdapter {
   listRemoteBrainThreads(
     request: ListRemoteBrainThreadsRequest,
   ): Promise<RemoteBrainThreadPage>;
-  startBrainTurn(request: StartBrainTurnRequest): Promise<BrainTurnStartResult>;
+  startBrainTurn(
+    request: StartBrainTurnRequest,
+    context?: BrainTurnContext,
+  ): Promise<BrainTurnStartResult>;
   interruptBrainTurn(request: InterruptBrainTurnRequest): Promise<BrainTurnRecord>;
   listLocalBrainThreads(projectId: string | null): Promise<BrainThreadRecord[]>;
   listLocalBrainTurns(threadId: string): Promise<BrainTurnRecord[]>;
@@ -203,11 +220,15 @@ export interface HostAdapter {
     request: ListBusinessCustomersRequest,
   ): Promise<BusinessCustomerReceivableSummary[]>;
   brainThreadArchive(threadId: string, archived: boolean): Promise<BrainThreadRecord>;
+  brainThreadRename(threadId: string, title: string): Promise<BrainThreadRecord>;
   brainThreadDelete(threadId: string): Promise<void>;
   authStatus(): Promise<AuthStatus>;
   authInitializeAdmin(credentials: AuthCredentials): Promise<AuthStatus>;
   authLogin(credentials: AuthCredentials): Promise<AuthStatus>;
   authLogout(): Promise<AuthStatus>;
+  authRememberedCredentials(): Promise<AuthCredentials | null>;
+  authRememberCredentials(credentials: AuthCredentials): Promise<void>;
+  authForgetCredentials(): Promise<void>;
   authChangePassword(payload: AuthChangePasswordPayload): Promise<AuthStatus>;
   authListUsers(): Promise<AuthUsersSnapshot>;
   authCreateUser(payload: AuthCreateUserPayload): Promise<AuthUsersSnapshot>;

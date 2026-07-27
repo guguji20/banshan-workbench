@@ -2,6 +2,7 @@
 node_modules/
 dist/
 dist-ssr/
+_upload/
 src-tauri/target/
 *.local
 *.log
@@ -25,7 +26,8 @@ src-tauri/target/
 *.db-wal
 *.db-shm
 vault/
-src-tauri/resources/media-runtime/
+src-tauri/resources/media-runtime/*
+!src-tauri/resources/media-runtime/README.txt
 
 # Reproducible upstream working copy and downloaded archive
 upstream/openai-codex/
@@ -35,6 +37,7 @@ upstream/openai-codex-*.zip
 .env
 .env.*
 !.env.example
+src-tauri/resources/r2.config.json
 src-tauri/resources/codex-runtime/codex.exe
 
 # 旧版安装包与构建产物（不入库，太大且是产物）
