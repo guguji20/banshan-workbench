@@ -31,8 +31,40 @@ $TauriConfigPath = Join-Path $RepoRoot "src-tauri\tauri.conf.json"
 
 function Get-LowerSha256 {
   param([Parameter(Mandatory = $true)][string]$Path)
-  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+  $stream = [System.IO.File]::Open(
+    $Path,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Read,
+    [System.IO.FileShare]::Read
+  )
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $sha256.Dispose()
+    $stream.Dispose()
+  }
 }
+
+function Import-CommandModuleIfMissing {
+  param(
+    [Parameter(Mandatory = $true)][string]$CommandName,
+    [Parameter(Mandatory = $true)][string]$ModuleName
+  )
+  if (Get-Command -Name $CommandName -ErrorAction SilentlyContinue) {
+    return
+  }
+  $moduleManifest = Join-Path $PSHOME "Modules\$ModuleName\$ModuleName.psd1"
+  if (-not (Test-Path -LiteralPath $moduleManifest -PathType Leaf)) {
+    throw "Required PowerShell command $CommandName is unavailable and its module manifest is missing: $moduleManifest"
+  }
+  Import-Module -Name $moduleManifest -ErrorAction Stop
+  if (-not (Get-Command -Name $CommandName -ErrorAction SilentlyContinue)) {
+    throw "Required PowerShell command $CommandName is unavailable after importing $ModuleName."
+  }
+}
+
+Import-CommandModuleIfMissing -CommandName "Get-AuthenticodeSignature" -ModuleName "Microsoft.PowerShell.Security"
 
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
   throw "Codex sidecar manifest is missing: $ManifestPath"
