@@ -254,19 +254,14 @@
       "sha256": "d04a99afe7e283a18c14a2b7a7dbc1e479df6c958b954c188b15417d502185de"
     },
     {
-      "path": "acceptance-pack/manifest.json",
-      "bytes": 1221,
-      "sha256": "e18b5889f9b852ef01f95e2ec2a673e4acedefcb8f0f8e262b3440bc32f33bcc"
-    },
-    {
       "path": "acceptance-pack/SKILL.md",
       "bytes": 1587,
       "sha256": "b697f1b26fa83b4eff82355addfba5f412d4fc029274aed5a6cb22128cd54bc0"
     },
     {
-      "path": "business-brief-intake/manifest.json",
-      "bytes": 1178,
-      "sha256": "97eda4d6b5f846cf1411afc598fc6d2ec29439916c7a8bf027e8d2addbd3c864"
+      "path": "acceptance-pack/manifest.json",
+      "bytes": 1221,
+      "sha256": "e18b5889f9b852ef01f95e2ec2a673e4acedefcb8f0f8e262b3440bc32f33bcc"
     },
     {
       "path": "business-brief-intake/SKILL.md",
@@ -274,29 +269,29 @@
       "sha256": "fa965480249b8e72436af187819328120ec19a0fb0b565b73fa2e2f521901c8d"
     },
     {
-      "path": "business-case-orchestrator/manifest.json",
-      "bytes": 1530,
-      "sha256": "229c9bcc78dd157e9d1b35a8c28e37ff9b243af11f372cade28843be623d04c6"
+      "path": "business-brief-intake/manifest.json",
+      "bytes": 1178,
+      "sha256": "97eda4d6b5f846cf1411afc598fc6d2ec29439916c7a8bf027e8d2addbd3c864"
     },
     {
       "path": "business-case-orchestrator/SKILL.md",
-      "bytes": 2159,
-      "sha256": "1fcc81deaf9c9b4d911dffddf047e67afe8711fbf1e22369d1523d46dcd6b211"
+      "bytes": 2104,
+      "sha256": "ee30ae928fe19943c93a76f34148e3ddcbef3bc95b9636696e9de31db19d2fc8"
     },
     {
-      "path": "business-communication-drafter/manifest.json",
-      "bytes": 1326,
-      "sha256": "670d9f95e29208b9b7f1ed69de2593729e78388c01989f46c6a412b720715055"
+      "path": "business-case-orchestrator/manifest.json",
+      "bytes": 1480,
+      "sha256": "0151f5f7e4b91890d37b6a2d196115d244378c93daca67a9eacd93c4279c2f94"
     },
     {
       "path": "business-communication-drafter/SKILL.md",
-      "bytes": 1836,
-      "sha256": "321844ef73c0d9350c6b4ba0ada7f6c61ace87e474a0c42e3b0096d5069a9169"
+      "bytes": 1784,
+      "sha256": "df8428000b90465e43c13b5bec58815d964278b46a5200587e48d3737ff1e21a"
     },
     {
-      "path": "business-consistency-audit/manifest.json",
-      "bytes": 1272,
-      "sha256": "383db8d3e3682f66090a11acd7349348eee41a9303d54dd3daddd043b85850d0"
+      "path": "business-communication-drafter/manifest.json",
+      "bytes": 1282,
+      "sha256": "3541b354476bec25f72c9384dc6eccea32bb442019edfad498f8b3ce179d7604"
     },
     {
       "path": "business-consistency-audit/SKILL.md",
@@ -304,29 +299,29 @@
       "sha256": "d094f64c50e22b8ed59c32b2765dccf3c5870f10a9b46aa0f98632478e7523bc"
     },
     {
-      "path": "business-document-pipeline/manifest.json",
-      "bytes": 1592,
-      "sha256": "99833cf817edc9b5ea875b1dcb41d6bfcb0a43c9134b9a6f454d3a103d9f7022"
+      "path": "business-consistency-audit/manifest.json",
+      "bytes": 1272,
+      "sha256": "383db8d3e3682f66090a11acd7349348eee41a9303d54dd3daddd043b85850d0"
     },
     {
       "path": "business-document-pipeline/SKILL.md",
-      "bytes": 2393,
-      "sha256": "ee1b103b09d6564df1ee11a717762b008417ae26412ed44625cff5b6a22c75e4"
+      "bytes": 2338,
+      "sha256": "0cbbe6bd6854dcee538054c059d9242b1f827216b814a34b5824cc50783a4a2d"
     },
     {
-      "path": "business-review-board/manifest.json",
-      "bytes": 1511,
-      "sha256": "c3c4140f2309b5ac46feb1b7af0d3c09f82b1cbd2981c8e71c49ab12d5c74e70"
+      "path": "business-document-pipeline/manifest.json",
+      "bytes": 1543,
+      "sha256": "e06ccd2e94ecde20c48334fd17d78f7b0c7e5ce5cb6f6407ab20d1adfa04873a"
     },
     {
       "path": "business-review-board/SKILL.md",
-      "bytes": 2163,
-      "sha256": "c82474d0b3ef7a740860337def9da85d8d93ea73e7254475b2ade25dd5658e46"
+      "bytes": 2107,
+      "sha256": "371503ceae28b58ffad259a9ff4c12fccb8bfc0a28fff3eacd363240bd998e9a"
     },
     {
-      "path": "contract-review/manifest.json",
-      "bytes": 1380,
-      "sha256": "36f6a97e7d4170ab2b63346bed3967711e2a5f2ae452c3e9deee6bb45b041409"
+      "path": "business-review-board/manifest.json",
+      "bytes": 1461,
+      "sha256": "0be4faf751efad33643eb72de71028b101a173f3ef4d0302e668bfd1b01137ef"
     },
     {
       "path": "contract-review/SKILL.md",
@@ -334,19 +329,19 @@
       "sha256": "ac62531ed802dde93d83ec925b9b182408842e196732eaec64637c633a91e920"
     },
     {
-      "path": "contract-version-compare/manifest.json",
-      "bytes": 1345,
-      "sha256": "e5d96264e3b343cbfc8787889ff0caff3a802cf2c38a6e3b508d4bf8af183657"
+      "path": "contract-review/manifest.json",
+      "bytes": 1380,
+      "sha256": "36f6a97e7d4170ab2b63346bed3967711e2a5f2ae452c3e9deee6bb45b041409"
     },
     {
       "path": "contract-version-compare/SKILL.md",
-      "bytes": 1769,
-      "sha256": "bdb3e5acdee3ea5c0ea730377e103fdaf5a91f9e622e3511403c0d21c1213981"
+      "bytes": 1717,
+      "sha256": "cac35abeca148609271efe89786c830d9441267436ba310641222c699ee2d887"
     },
     {
-      "path": "payment-request-pack/manifest.json",
-      "bytes": 1250,
-      "sha256": "c76b84e9d72bc8264184299a220924ae9510c38862117229c8e262cb94274cf0"
+      "path": "contract-version-compare/manifest.json",
+      "bytes": 1300,
+      "sha256": "bcaa46ce53197ad77e3559bb1109b735ab5ccc0698604d996d7a66bac3f2cf41"
     },
     {
       "path": "payment-request-pack/SKILL.md",
@@ -354,9 +349,9 @@
       "sha256": "e99efba2000de63126e0fc7d5f7a3af5caa4791f41ff964b8c0b1ad86a714b39"
     },
     {
-      "path": "project-master-data/manifest.json",
-      "bytes": 1239,
-      "sha256": "78048e25918613597dfcd5890c4677c0fe4c39e8063635665bda76640caea7f8"
+      "path": "payment-request-pack/manifest.json",
+      "bytes": 1250,
+      "sha256": "c76b84e9d72bc8264184299a220924ae9510c38862117229c8e262cb94274cf0"
     },
     {
       "path": "project-master-data/SKILL.md",
@@ -364,9 +359,9 @@
       "sha256": "bdfce46c82fe26f51353c89961c6041bf50f92965a74e29eddb18ef723f2685b"
     },
     {
-      "path": "quotation-builder/manifest.json",
-      "bytes": 1205,
-      "sha256": "67c6cb156ef5c0328d2cf94931a10a413b7ff180d9dda45b8ba594e31c29186f"
+      "path": "project-master-data/manifest.json",
+      "bytes": 1239,
+      "sha256": "78048e25918613597dfcd5890c4677c0fe4c39e8063635665bda76640caea7f8"
     },
     {
       "path": "quotation-builder/SKILL.md",
@@ -374,24 +369,29 @@
       "sha256": "3c3950ece73839a95d39b599eca810e93df15204a0f3442d50e2c1f93dbebee1"
     },
     {
-      "path": "receivables-followup/manifest.json",
-      "bytes": 1398,
-      "sha256": "1a93af3e96e9e9b3d1af64c868f834935a2a484c92812df677abb9b7ef318bdd"
+      "path": "quotation-builder/manifest.json",
+      "bytes": 1205,
+      "sha256": "67c6cb156ef5c0328d2cf94931a10a413b7ff180d9dda45b8ba594e31c29186f"
     },
     {
       "path": "receivables-followup/SKILL.md",
-      "bytes": 1933,
-      "sha256": "fbd418522ed8840473ebb3ac619de031d01a4d9afa8c19aa81f3a618d4589164"
+      "bytes": 1879,
+      "sha256": "2de3272ee8e032c926fbfd718bcf386fc66f67f49def974f3816e82728adf15d"
     },
     {
-      "path": "tender-checklist/manifest.json",
-      "bytes": 1164,
-      "sha256": "3b3b37608bd18b947113eac3061e75d1dcf099e040a43fc4b749163a6b9c41ed"
+      "path": "receivables-followup/manifest.json",
+      "bytes": 1350,
+      "sha256": "d3b131235c6ad585bedde001cb0a4bba03f4da1319190efa951ea7891315d3fe"
     },
     {
       "path": "tender-checklist/SKILL.md",
       "bytes": 1606,
       "sha256": "da14db5b59640244b4a9cf91649944bf633c07c571a70edb2927ddb76347626e"
+    },
+    {
+      "path": "tender-checklist/manifest.json",
+      "bytes": 1164,
+      "sha256": "3b3b37608bd18b947113eac3061e75d1dcf099e040a43fc4b749163a6b9c41ed"
     }
   ]
 }
