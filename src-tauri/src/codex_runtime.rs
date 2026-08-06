@@ -201,7 +201,7 @@ fn initialize_params() -> Value {
     json!({
         "clientInfo": {
             "name": "bsaigc-desktop",
-            "title": "Banshan AIGC Desktop",
+            "title": "华邦互娱商务系统",
             "version": env!("CARGO_PKG_VERSION")
         },
         "capabilities": {

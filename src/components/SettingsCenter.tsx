@@ -45,6 +45,7 @@ import {
 import type { AppUserRole } from "../generated/bsaigc/AppUserRole";
 import type { AuthStatus } from "../generated/bsaigc/AuthStatus";
 import type { AuthUsersSnapshot } from "../generated/bsaigc/AuthUsersSnapshot";
+import { PRODUCT_LOGO_PATH, PRODUCT_NAME } from "../brand";
 import { AUTH_ROLE_LABELS, AUTH_SYNC_LABELS, localizeAuthError } from "./authText";
 import "./SettingsCenter.css";
 
@@ -223,6 +224,13 @@ function emptyProviderDraft(providerKind: AiProviderKind): ProviderDraft {
 }
 function providerToDraft(provider: AiProviderSettings): ProviderDraft {
   return { name: provider.name, providerKind: provider.providerKind, baseUrl: provider.baseUrl, apiKey: "", clearApiKey: false, models: [...provider.models], defaultModel: provider.defaultModel };
+}
+export function syncProviderBaseUrlDraft<T extends { baseUrl: string }>(
+  event: { currentTarget: { value: string } },
+  updateDraft: (update: (current: T) => T) => void,
+) {
+  const baseUrl = event.currentTarget.value;
+  updateDraft((current) => current.baseUrl === baseUrl ? current : { ...current, baseUrl });
 }
 function providerDraftToInput(draft: ProviderDraft): AiProviderInput {
   const models = [...new Set(draft.models.map((model) => model.trim()).filter(Boolean))];
@@ -525,7 +533,7 @@ export function SettingsCenter(props: SettingsCenterProps) {
             <div className="settings-center__field-grid">
               <label className="settings-center__field">
                 <span>服务名称</span>
-                <input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="例如：半山 AIGC" autoComplete="off" />
+                <input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="例如：华邦互娱 AI" autoComplete="off" />
               </label>
               <label className="settings-center__field">
                 <span>接口类型</span>
@@ -535,7 +543,7 @@ export function SettingsCenter(props: SettingsCenterProps) {
               </label>
               <label className="settings-center__field is-wide">
                 <span>Base URL</span>
-                <input value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" inputMode="url" spellCheck={false} />
+                <input value={draft.baseUrl} onInput={(event) => syncProviderBaseUrlDraft(event, setDraft)} onChange={(event) => syncProviderBaseUrlDraft(event, setDraft)} placeholder="https://api.example.com/v1" inputMode="url" spellCheck={false} />
               </label>
               <label className="settings-center__field is-wide">
                 <span>API Key{apiKeyConfigured ? <small>{selectedProvider?.apiKeyHint || "已安全保存"}</small> : null}</span>
@@ -699,8 +707,8 @@ export function SettingsCenter(props: SettingsCenterProps) {
         <Section title="版本">
           <Card>
             <div className="settings-center__about-head">
-              <span className="settings-center__app-mark">半</span>
-              <div><strong>半山商务工作台</strong><p>桌面端商务全流程工作台</p></div>
+              <span className="settings-center__app-mark"><img src={PRODUCT_LOGO_PATH} alt="" /></span>
+              <div><strong>{PRODUCT_NAME}</strong><p>桌面端商务全流程系统</p></div>
               <StatusPill tone={props.update.buildChannel === "stable" ? "success" : "warning"}>{props.update.buildChannel === "stable" ? "Stable" : "Development"}</StatusPill>
             </div>
             <div className="settings-center__version-list">
@@ -716,7 +724,7 @@ export function SettingsCenter(props: SettingsCenterProps) {
             <div className="settings-center__update-row">
               <span className="settings-center__integration-icon"><Download size={18} /></span>
               <div className="settings-center__integration-copy">
-                <div><strong>{updateAvailable ? `发现 ${props.update.latestVersion || "新版本"}` : "检查更新"}</strong><StatusPill tone={props.update.updateSourceConfigured ? "success" : "warning"}>{props.update.updateSourceConfigured ? "更新源已配置" : "更新源未配置"}</StatusPill></div>
+                <div><strong>{updateAvailable ? `发现 ${props.update.latestVersion || "可用更新"}` : "检查更新"}</strong><StatusPill tone={props.update.updateSourceConfigured ? "success" : "warning"}>{props.update.updateSourceConfigured ? "更新源已配置" : "更新源未配置"}</StatusPill></div>
                 <p>{props.update.message || (props.update.updateSourceConfigured ? `最近检查：${formatTime(props.update.checkedAt)}` : "配置签名更新源后才会启用安装流程")}</p>
                 {props.update.updateSource ? <code>{props.update.updateSource}</code> : null}
               </div>
@@ -731,7 +739,7 @@ export function SettingsCenter(props: SettingsCenterProps) {
                   }}
                   title="点击在浏览器打开下载（链接已同时复制，可粘贴到任意浏览器）"
                 >
-                  <Download size={15} />下载新版本
+                  <Download size={15} />下载安装
                 </a>
               ) : null}
               <button type="button" className="settings-center__button" onClick={() => void runAction("update-check", props.onCheckForUpdates)} disabled={isChecking || Boolean(busyAction)}>

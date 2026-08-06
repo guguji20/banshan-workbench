@@ -7,6 +7,8 @@ param(
   [switch]$DryRun,
   [switch]$AllowExistingProductRegistration,
   [switch]$ExpectEmbeddedPreviewCredential,
+  [switch]$InjectFailureAfterUpgrade,
+  [int]$ColdStartCount = 2,
   [int]$StartupObservationSeconds = 8,
   [int]$ProcessExitTimeoutSeconds = 20,
   [int]$InstallerTimeoutSeconds = 300
@@ -16,7 +18,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-$ProductName = "$([char]0x534A)$([char]0x5C71)$([char]0x5546)$([char]0x52A1)$([char]0x5DE5)$([char]0x4F5C)$([char]0x53F0)"
+$ProductName = "$([char]0x534E)$([char]0x90A6)$([char]0x4E92)$([char]0x5A31)$([char]0x5546)$([char]0x52A1)$([char]0x7CFB)$([char]0x7EDF)"
 $AppIdentifier = "com.banshan.aigc.desktop"
 $AppExeName = "bsaigc_desktop.exe"
 $UninstallerName = "uninstall.exe"
@@ -36,6 +38,9 @@ if ($RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
 }
 if ($StartupObservationSeconds -lt 3) {
   throw "StartupObservationSeconds $([char]0x4E0D)$([char]0x5F97)$([char]0x5C0F)$([char]0x4E8E) 3$([char]0x3002)"
+}
+if ($ColdStartCount -lt 2) {
+  throw "ColdStartCount must be at least 2 so independent process starts can be verified."
 }
 if ($ProcessExitTimeoutSeconds -lt 5) {
   throw "ProcessExitTimeoutSeconds $([char]0x4E0D)$([char]0x5F97)$([char]0x5C0F)$([char]0x4E8E) 5$([char]0x3002)"
@@ -71,6 +76,11 @@ $ExpectedInstallerName = "${ProductName}_${Version}_x64-setup.exe"
 $AppPath = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot $AppExeName))
 $UninstallerPath = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot $UninstallerName))
 
+$DataRollbackRoot = [System.IO.Path]::GetFullPath((Join-Path $RunRoot 'data-rollback'))
+$DataRollbackBackupRoot = [System.IO.Path]::GetFullPath((Join-Path $DataRollbackRoot 'backup'))
+$DataRollbackQuarantineRoot = [System.IO.Path]::GetFullPath((Join-Path $DataRollbackRoot 'failed-state'))
+$DataRollbackManifestPath = [System.IO.Path]::GetFullPath((Join-Path $DataRollbackRoot 'backup-manifest.json'))
+
 $script:LogFileEnabled = $false
 $script:StartedProcesses = New-Object System.Collections.Generic.List[int]
 $script:BaselineRegistryExports = New-Object System.Collections.Generic.List[object]
@@ -85,6 +95,10 @@ $script:FinalProductVersion = $null
 $script:UpgradeKind = "unknown"
 $script:Steps = New-Object System.Collections.Generic.List[object]
 $script:CredentialProbeResult = $null
+$script:DataBackupCreated = $false
+$script:DataRollbackAttempted = $false
+$script:DataRollbackCompleted = $false
+$script:DataRollbackError = $null
 
 function Test-IsDescendantPath {
   param(
@@ -149,6 +163,15 @@ foreach ($target in @(
   @{ Path = $RegistryBackupRoot; Label = "$([char]0x6CE8)$([char]0x518C)$([char]0x8868)$([char]0x5907)$([char]0x4EFD)$([char]0x76EE)$([char]0x5F55)" }
 )) {
   Assert-RuntimeTargetPath -Path $target.Path -Label $target.Label
+}
+
+foreach ($rollbackTarget in @(
+  @{ Path = $DataRollbackRoot; Label = 'data rollback root' },
+  @{ Path = $DataRollbackBackupRoot; Label = 'data rollback backup' },
+  @{ Path = $DataRollbackQuarantineRoot; Label = 'data rollback failed-state quarantine' },
+  @{ Path = $DataRollbackManifestPath; Label = 'data rollback manifest' }
+)) {
+  Assert-RuntimeTargetPath -Path $rollbackTarget.Path -Label $rollbackTarget.Label
 }
 
 function Write-Log {
@@ -347,6 +370,10 @@ function Remove-TestRegistryEntries {
       throw "$([char]0x62D2)$([char]0x7EDD)$([char]0x6E05)$([char]0x7406)$([char]0x672A)$([char]0x660E)$([char]0x786E)$([char]0x6307)$([char]0x5411)$([char]0x6D4B)$([char]0x8BD5)$([char]0x5B89)$([char]0x88C5)$([char]0x76EE)$([char]0x5F55)$([char]0x7684)$([char]0x6CE8)$([char]0x518C)$([char]0x8868)$([char]0x9879)$([char]0xFF1A)$($entry.registryPath)"
     }
     Write-Log -Level WARN -Message "$([char]0x6E05)$([char]0x7406)$([char]0x6D4B)$([char]0x8BD5)$([char]0x6B8B)$([char]0x7559)$([char]0x6CE8)$([char]0x518C)$([char]0x8868)$([char]0x9879)$([char]0xFF1A)$($entry.registryPath)"
+    if (-not (Test-Path -LiteralPath $registryProviderPath)) {
+      Write-Log -Level INFO -Message "Test uninstall registry entry is already absent; skipping: $registryProviderPath"
+      continue
+    }
     Remove-Item -LiteralPath $registryProviderPath -Recurse -Force
   }
   $remaining = @(Get-UninstallRegistryEntries | Where-Object { Test-RegistryEntryTargetsInstallRoot -Entry $_ })
@@ -715,6 +742,56 @@ function Get-AuthoritativeDataSnapshot {
   return $records.ToArray()
 }
 
+function New-ReleaseDataPreservationSentinels {
+  $definitions = @(
+    @{ domain = 'sqlite'; path = (Join-Path $DataRoot 'ledger\.nsis-acceptance-sqlite-sentinel.json') },
+    @{ domain = 'vault'; path = (Join-Path $DataRoot 'vault\.nsis-acceptance-vault-sentinel.json') },
+    @{ domain = 'credentials'; path = (Join-Path $DataRoot 'credentials\.nsis-acceptance-credentials-sentinel.json') },
+    @{ domain = 'brain-workspace'; path = (Join-Path $DataRoot 'codex-home\workspaces\.nsis-acceptance-brain-workspace-sentinel.json') },
+    @{ domain = 'business-workspace'; path = (Join-Path $DataRoot 'vault\.business-workspace-staging\.nsis-acceptance-business-workspace-sentinel.json') }
+  )
+  $paths = New-Object System.Collections.Generic.List[string]
+  foreach ($definition in $definitions) {
+    Assert-RuntimeTargetPath -Path $definition.path -Label ($definition.domain + ' preservation sentinel')
+    $parent = Split-Path -Parent $definition.path
+    Assert-RuntimeTargetPath -Path $parent -Label ($definition.domain + ' preservation root')
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    Write-JsonNoBom -Value ([ordered]@{
+      schemaVersion = 1
+      runId = $RunId
+      domain = $definition.domain
+      purpose = 'verify isolated user data survives overwrite upgrade, rollback, and uninstall'
+      createdAt = (Get-Date).ToString('o')
+    }) -Path $definition.path
+    $paths.Add($definition.path)
+  }
+  return $paths.ToArray()
+}
+
+function Get-ReleaseDataSnapshotFromRoot {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $records = New-Object System.Collections.Generic.List[object]
+  foreach ($relativeRoot in @('ledger', 'vault', 'credentials', 'codex-home')) {
+    $authorityRoot = Join-Path $Root $relativeRoot
+    if (-not (Test-Path -LiteralPath $authorityRoot -PathType Container)) {
+      throw ('required release data root does not exist: ' + $authorityRoot)
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $authorityRoot -Recurse -Force -File | Sort-Object FullName)) {
+      $records.Add([ordered]@{
+        relativePath = $file.FullName.Substring($Root.Length + 1).Replace('\', '/')
+        length = $file.Length
+        sha256 = Get-FileSha256Lower -Path $file.FullName
+      })
+    }
+  }
+  return $records.ToArray()
+}
+
+function Get-ReleaseDataSnapshot {
+  return @(Get-ReleaseDataSnapshotFromRoot -Root $DataRoot)
+}
+
 function Assert-SnapshotsEqual {
   param(
     [Parameter(Mandatory = $true)][object[]]$Before,
@@ -728,6 +805,47 @@ function Assert-SnapshotsEqual {
     throw "$Label $([char]0x524D)$([char]0x540E) SQLite/Vault $([char]0x6587)$([char]0x4EF6)$([char]0x96C6)$([char]0x5408)$([char]0x3001)$([char]0x5927)$([char]0x5C0F)$([char]0x6216) SHA-256 $([char]0x4E0D)$([char]0x4E00)$([char]0x81F4)$([char]0x3002)"
   }
   Write-Log -Level PASS -Message "$Label $([char]0x672A)$([char]0x6539)$([char]0x5199)$([char]0x9694)$([char]0x79BB) SQLite/Vault $([char]0x6570)$([char]0x636E)$([char]0x3002)"
+}
+
+function New-ReleaseDataRollbackBackup {
+  param([Parameter(Mandatory = $true)][object[]]$ExpectedSnapshot)
+
+  if ($script:DataBackupCreated) {
+    return
+  }
+  if (Test-Path -LiteralPath $DataRollbackRoot) {
+    throw ('data rollback root already exists: ' + $DataRollbackRoot)
+  }
+  New-Item -ItemType Directory -Path $DataRollbackRoot -Force | Out-Null
+  Copy-Item -LiteralPath $DataRoot -Destination $DataRollbackBackupRoot -Recurse -Force
+  $backupSnapshot = @(Get-ReleaseDataSnapshotFromRoot -Root $DataRollbackBackupRoot)
+  Assert-SnapshotsEqual -Before $ExpectedSnapshot -After $backupSnapshot -Label 'rollback backup'
+  Write-JsonNoBom -Value $backupSnapshot -Path $DataRollbackManifestPath -Depth 8
+  $script:DataBackupCreated = $true
+  Add-StepResult -Name 'data-backup' -Status 'passed' -Detail 'Isolated AppData backup and SHA-256 manifest created before overwrite upgrade.'
+}
+
+function Restore-ReleaseDataRollbackBackup {
+  if (-not $script:DataBackupCreated -or $script:DataRollbackCompleted) {
+    return
+  }
+  $script:DataRollbackAttempted = $true
+  Stop-TestInstallProcesses
+  if (-not (Test-Path -LiteralPath $DataRollbackBackupRoot -PathType Container)) {
+    throw ('data rollback backup is missing: ' + $DataRollbackBackupRoot)
+  }
+  if (Test-Path -LiteralPath $DataRollbackQuarantineRoot) {
+    throw ('data rollback quarantine already exists: ' + $DataRollbackQuarantineRoot)
+  }
+  if (Test-Path -LiteralPath $DataRoot) {
+    Move-Item -LiteralPath $DataRoot -Destination $DataRollbackQuarantineRoot
+  }
+  Copy-Item -LiteralPath $DataRollbackBackupRoot -Destination $DataRoot -Recurse -Force
+  $expectedSnapshot = [object[]](Get-Content -LiteralPath $DataRollbackManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+  $restoredSnapshot = @(Get-ReleaseDataSnapshot)
+  Assert-SnapshotsEqual -Before $expectedSnapshot -After $restoredSnapshot -Label 'data rollback restore'
+  $script:DataRollbackCompleted = $true
+  Add-StepResult -Name 'data-rollback' -Status 'passed' -Detail 'Failed isolated AppData state was quarantined and the pre-upgrade SHA-256 snapshot was restored.'
 }
 
 function Assert-SentinelsExist {
@@ -792,6 +910,19 @@ function Write-AcceptanceSummary {
     installRoot = $InstallRoot
     profileRoot = $ProfileRoot
     dataRoot = $DataRoot
+    coldStartCount = $ColdStartCount
+    dataPreservation = [ordered]@{
+      roots = @('ledger', 'vault', 'credentials', 'codex-home')
+      sentinels = @('sqlite', 'vault', 'credentials', 'brain-workspace', 'business-workspace')
+      backupCreated = $script:DataBackupCreated
+      rollbackAttempted = $script:DataRollbackAttempted
+      rollbackCompleted = $script:DataRollbackCompleted
+      rollbackError = $script:DataRollbackError
+      backupRoot = $DataRollbackBackupRoot
+      failedStateQuarantineRoot = $DataRollbackQuarantineRoot
+      manifestPath = $DataRollbackManifestPath
+      injectFailureAfterUpgrade = [bool]$InjectFailureAfterUpgrade
+    }
     expectEmbeddedPreviewCredential = [bool]$ExpectEmbeddedPreviewCredential
     credentialProbe = $script:CredentialProbeResult
     uninstallCompleted = $script:UninstallCompleted
@@ -871,7 +1002,7 @@ try {
     schemaVersion = 1
     runId = $RunId
     productName = $ProductName
-    purpose = "BSAIGC NSIS release acceptance"
+    purpose = "Huabang Business System NSIS release acceptance"
     createdAt = (Get-Date).ToString("o")
   }) -Path $RunMarkerPath
   Write-Log -Level INFO -Message "$([char]0x9A8C)$([char]0x6536)$([char]0x5F00)$([char]0x59CB)$([char]0x3002)$([char]0x6240)$([char]0x6709)$([char]0x6D4B)$([char]0x8BD5)$([char]0x5199)$([char]0x5165)$([char]0x5747)$([char]0x9650)$([char]0x5236)$([char]0x5728)$([char]0xFF1A)$RunRoot"
@@ -893,8 +1024,9 @@ try {
   Stop-TrackedApplication -Process $firstProcess -Label "$([char]0x9996)$([char]0x6B21)$([char]0x542F)$([char]0x52A8)$([char]0x8FDB)$([char]0x7A0B)"
   Stop-TestInstallProcesses
   Assert-AuthoritativeDataCreated
-  $sentinels = @(New-PreservationSentinels)
-  $beforeUpgradeSnapshot = @(Get-AuthoritativeDataSnapshot)
+  $sentinels = @(New-ReleaseDataPreservationSentinels)
+  $beforeUpgradeSnapshot = @(Get-ReleaseDataSnapshot)
+  New-ReleaseDataRollbackBackup -ExpectedSnapshot $beforeUpgradeSnapshot
   Write-JsonNoBom -Value $beforeUpgradeSnapshot -Path (Join-Path $RunRoot "data-before-upgrade.json")
   Add-StepResult -Name "first-start" -Status "passed" -Detail "$([char]0x5E94)$([char]0x7528)$([char]0x542F)$([char]0x52A8)$([char]0x5E76)$([char]0x9000)$([char]0x51FA)$([char]0xFF0C)$([char]0x9694)$([char]0x79BB) SQLite/Vault $([char]0x5DF2)$([char]0x5EFA)$([char]0x7ACB)$([char]0x3002)"
 
@@ -915,27 +1047,29 @@ try {
   if ($ExpectEmbeddedPreviewCredential) {
     Invoke-FinalCandidateCredentialProbe
   }
-  $afterUpgradeBeforeLaunchSnapshot = @(Get-AuthoritativeDataSnapshot)
+  $afterUpgradeBeforeLaunchSnapshot = @(Get-ReleaseDataSnapshot)
   Write-JsonNoBom -Value $afterUpgradeBeforeLaunchSnapshot -Path (Join-Path $RunRoot "data-after-upgrade-before-launch.json")
   Assert-SnapshotsEqual -Before $beforeUpgradeSnapshot -After $afterUpgradeBeforeLaunchSnapshot -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x5B89)$([char]0x88C5)"
   Assert-SentinelsExist -Paths $sentinels -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x5B89)$([char]0x88C5)"
   Add-StepResult -Name "upgrade" -Status "passed" -Detail "$([char]0x6700)$([char]0x7EC8)$([char]0x5B89)$([char]0x88C5)$([char]0x5305)$([char]0x8986)$([char]0x76D6)$([char]0x5B89)$([char]0x88C5)$([char]0x6210)$([char]0x529F)$([char]0xFF0C)$([char]0x542F)$([char]0x52A8)$([char]0x524D) SQLite/Vault $([char]0x5FEB)$([char]0x7167)$([char]0x5B8C)$([char]0x5168)$([char]0x4E00)$([char]0x81F4)$([char]0x3002)"
 
-  $restartOne = Start-IsolatedApplication -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) 1 $([char]0x6B21)$([char]0x542F)$([char]0x52A8)"
-  $restartOnePid = $restartOne.Id
-  Stop-TrackedApplication -Process $restartOne -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) 1 $([char]0x6B21)$([char]0x542F)$([char]0x52A8)$([char]0x8FDB)$([char]0x7A0B)"
-  Stop-TestInstallProcesses
-  Assert-SentinelsExist -Paths $sentinels -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) 1 $([char]0x6B21)$([char]0x542F)$([char]0x52A8)"
-
-  $restartTwo = Start-IsolatedApplication -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) 2 $([char]0x6B21)$([char]0x542F)$([char]0x52A8)"
-  $restartTwoPid = $restartTwo.Id
-  if ($restartOnePid -eq $restartTwoPid) {
-    throw "$([char]0x4E24)$([char]0x6B21)$([char]0x542F)$([char]0x52A8)$([char]0x590D)$([char]0x7528)$([char]0x4E86)$([char]0x540C)$([char]0x4E00) PID$([char]0xFF0C)$([char]0x91CD)$([char]0x542F)$([char]0x9A8C)$([char]0x8BC1)$([char]0x65E0)$([char]0x6548)$([char]0x3002)"
+  if ($InjectFailureAfterUpgrade) {
+    throw 'Injected failure after overwrite upgrade to verify isolated data rollback.'
   }
-  Stop-TrackedApplication -Process $restartTwo -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) 2 $([char]0x6B21)$([char]0x542F)$([char]0x52A8)$([char]0x8FDB)$([char]0x7A0B)"
-  Stop-TestInstallProcesses
-  Assert-SentinelsExist -Paths $sentinels -Label "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) 2 $([char]0x6B21)$([char]0x542F)$([char]0x52A8)"
-  Add-StepResult -Name "restart" -Status "passed" -Detail "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x5B8C)$([char]0x6210)$([char]0x4E24)$([char]0x6B21)$([char]0x72EC)$([char]0x7ACB) PID $([char]0x7684)$([char]0x542F)$([char]0x52A8)/$([char]0x9000)$([char]0x51FA)$([char]0xFF0C)$([char]0x6570)$([char]0x636E)$([char]0x54E8)$([char]0x5175)$([char]0x4FDD)$([char]0x7559)$([char]0x3002)"
+
+  $restartProcessInstances = New-Object System.Collections.Generic.HashSet[string]
+  for ($restartIndex = 1; $restartIndex -le $ColdStartCount; $restartIndex++) {
+    $restartLabel = "$([char]0x5347)$([char]0x7EA7)$([char]0x540E)$([char]0x7B2C) $restartIndex $([char]0x6B21)$([char]0x542F)$([char]0x52A8)"
+    $restartProcess = Start-IsolatedApplication -Label $restartLabel
+    $restartProcessInstance = "$($restartProcess.Id):$($restartProcess.StartTime.ToUniversalTime().Ticks)"
+    if (-not $restartProcessInstances.Add($restartProcessInstance)) {
+      throw "Cold start $restartIndex reused process instance identity $restartProcessInstance; restart verification is invalid."
+    }
+    Stop-TrackedApplication -Process $restartProcess -Label "$restartLabel$([char]0x8FDB)$([char]0x7A0B)"
+    Stop-TestInstallProcesses
+    Assert-SentinelsExist -Paths $sentinels -Label $restartLabel
+  }
+  Add-StepResult -Name "restart" -Status "passed" -Detail "$ColdStartCount cold starts completed with independent process instances; SQLite/Vault sentinels were preserved after every start."
 
   Invoke-TestUninstall
   Assert-SentinelsExist -Paths $sentinels -Label "$([char]0x5378)$([char]0x8F7D)"
@@ -963,6 +1097,15 @@ try {
     } catch {
       Write-Log -Level ERROR -Message "$([char]0x6E05)$([char]0x7406)$([char]0x6D4B)$([char]0x8BD5)$([char]0x8FDB)$([char]0x7A0B)$([char]0x5931)$([char]0x8D25)$([char]0xFF1A)$($_.Exception.Message)"
       if ($null -eq $script:AcceptanceError) { $script:AcceptanceError = $_ }
+    }
+    if ($null -ne $script:AcceptanceError -and $script:DataBackupCreated -and -not $script:DataRollbackCompleted) {
+      try {
+        Restore-ReleaseDataRollbackBackup
+      } catch {
+        $script:DataRollbackError = $_.Exception.Message
+        Write-Log -Level ERROR -Message ('data rollback failed: ' + $script:DataRollbackError)
+        if ($null -eq $script:AcceptanceError) { $script:AcceptanceError = $_ }
+      }
     }
     if ($script:InstalledByThisRun -and -not $script:UninstallCompleted) {
       try {

@@ -10,7 +10,7 @@
 - `git-diff.binary.patch`：相对当前 `HEAD` 的完整 binary patch（不含明确排除项）。
 - `untracked-files.txt`：本次源码 ZIP 中包含的 Git untracked 文件。
 - `git-status.txt`：创建快照时的分支和 working tree 状态。
-- `bsaigc-desktop-source-<version>-<head>-<utc>.zip`：按相对路径排序、固定 ZIP 时间戳的源码包。
+- `huabang-business-system-source-<version>-<head>-<utc>.zip`：按相对路径排序、固定 ZIP 时间戳的源码包。
 - `SHA256SUMS.txt`：全部交付文件 SHA-256 与稳定的 `FINAL_SNAPSHOT_SHA256`。
 
 ## 默认排除

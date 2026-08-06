@@ -28,7 +28,9 @@ const ASSET_ORIGIN_GENERATED_REVIEW_REPORT: &str = "generatedReviewReport";
 const ASSET_ORIGIN_GENERATED_PAGE_PREVIEW: &str = "generatedPagePreview";
 const ASSET_ORIGIN_GENERATED_ARCHIVE_MANIFEST: &str = "generatedArchiveManifest";
 const ASSET_ORIGIN_GENERATED_ARCHIVE_PACKAGE: &str = "generatedArchivePackage";
+const ASSET_ORIGIN_NORMALIZED_TEMPLATE: &str = "normalizedTemplate";
 const MAX_GENERATED_ARTIFACT_REF_CHARS: usize = 256;
+const MAX_TEMPLATE_ASSET_SIZE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// A local safety ceiling against accidentally importing devices or enormous
 /// sparse files. Normal production video files remain well below this limit.
@@ -47,6 +49,7 @@ pub(crate) enum GeneratedArtifactSource {
     PagePreview,
     ArchiveManifest,
     ArchivePackage,
+    NormalizedTemplate,
 }
 
 impl GeneratedArtifactSource {
@@ -57,6 +60,7 @@ impl GeneratedArtifactSource {
             Self::PagePreview => ASSET_ORIGIN_GENERATED_PAGE_PREVIEW,
             Self::ArchiveManifest => ASSET_ORIGIN_GENERATED_ARCHIVE_MANIFEST,
             Self::ArchivePackage => ASSET_ORIGIN_GENERATED_ARCHIVE_PACKAGE,
+            Self::NormalizedTemplate => ASSET_ORIGIN_NORMALIZED_TEMPLATE,
         }
     }
 }
@@ -70,6 +74,7 @@ pub(crate) enum AssetSourceKind {
     GeneratedPagePreview,
     ArchiveManifest,
     ArchivePackage,
+    NormalizedTemplate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,7 +161,8 @@ fn migrate_asset_origins(connection: &Connection) -> Result<(), HostError> {
                     'generatedReviewReport',
                     'generatedPagePreview',
                     'generatedArchiveManifest',
-                    'generatedArchivePackage'
+                    'generatedArchivePackage',
+                    'normalizedTemplate'
                 )),
                 origin_ref TEXT,
                 created_at INTEGER NOT NULL,
@@ -169,7 +175,8 @@ fn migrate_asset_origins(connection: &Connection) -> Result<(), HostError> {
                             'generatedReviewReport',
                             'generatedPagePreview',
                             'generatedArchiveManifest',
-                            'generatedArchivePackage'
+                            'generatedArchivePackage',
+                            'normalizedTemplate'
                         )
                         AND origin_ref IS NOT NULL
                     )
@@ -197,6 +204,7 @@ fn migrate_asset_origins(connection: &Connection) -> Result<(), HostError> {
         ASSET_ORIGIN_GENERATED_PAGE_PREVIEW,
         ASSET_ORIGIN_GENERATED_ARCHIVE_MANIFEST,
         ASSET_ORIGIN_GENERATED_ARCHIVE_PACKAGE,
+        ASSET_ORIGIN_NORMALIZED_TEMPLATE,
     ]
     .iter()
     .all(|origin| schema.contains(origin));
@@ -218,7 +226,8 @@ fn migrate_asset_origins(connection: &Connection) -> Result<(), HostError> {
                 'generatedReviewReport',
                 'generatedPagePreview',
                 'generatedArchiveManifest',
-                'generatedArchivePackage'
+                'generatedArchivePackage',
+                'normalizedTemplate'
             )),
             origin_ref TEXT,
             created_at INTEGER NOT NULL,
@@ -231,7 +240,8 @@ fn migrate_asset_origins(connection: &Connection) -> Result<(), HostError> {
                         'generatedReviewReport',
                         'generatedPagePreview',
                         'generatedArchiveManifest',
-                        'generatedArchivePackage'
+                        'generatedArchivePackage',
+                        'normalizedTemplate'
                     )
                     AND origin_ref IS NOT NULL
                 )
@@ -878,6 +888,183 @@ pub(crate) fn verify_ready_asset_integrity(
     Ok((asset, path))
 }
 
+/// Reads a ready template from the Local Vault into a bounded in-memory buffer.
+/// Integrity verification and byte collection use the same open file handle.
+pub(crate) fn read_verified_template_asset(
+    connection: &Connection,
+    vault_root: &Path,
+    asset_id: &str,
+) -> Result<(AssetRecord, Vec<u8>), HostError> {
+    let asset = get_asset(connection, asset_id)?;
+    if asset.status != AssetStatus::Ready {
+        return Err(HostError::new(
+            "ASSET_NOT_READY",
+            "asset is not ready for template rendering",
+            true,
+        ));
+    }
+    if asset.size_bytes < 0 || asset.size_bytes as u64 > MAX_TEMPLATE_ASSET_SIZE_BYTES {
+        return Err(HostError::new(
+            "TEMPLATE_ASSET_TOO_LARGE",
+            format!(
+                "template asset exceeds the {} byte safety limit",
+                MAX_TEMPLATE_ASSET_SIZE_BYTES
+            ),
+            false,
+        ));
+    }
+
+    let path = resolve_original_path(connection, vault_root, asset_id)?;
+    let mut file =
+        File::open(&path).map_err(|error| vault_io_error("open Vault template asset", error))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| vault_io_error("inspect Vault template asset", error))?;
+    if metadata.len() != asset.size_bytes as u64 {
+        return Err(HostError::new(
+            "VAULT_ASSET_INTEGRITY_MISMATCH",
+            "Vault template asset size no longer matches the authoritative record",
+            false,
+        ));
+    }
+
+    let expected_size = usize::try_from(asset.size_bytes).map_err(|_| {
+        HostError::new(
+            "TEMPLATE_ASSET_TOO_LARGE",
+            "template asset size cannot be represented in memory",
+            false,
+        )
+    })?;
+    let mut bytes = Vec::with_capacity(expected_size);
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| vault_io_error("read Vault template asset", error))?;
+        if read == 0 {
+            break;
+        }
+        let observed_size = bytes.len().checked_add(read).ok_or_else(|| {
+            HostError::new(
+                "TEMPLATE_ASSET_TOO_LARGE",
+                "template asset size overflowed during bounded read",
+                false,
+            )
+        })?;
+        if observed_size > expected_size || observed_size as u64 > MAX_TEMPLATE_ASSET_SIZE_BYTES {
+            return Err(HostError::new(
+                "VAULT_ASSET_INTEGRITY_MISMATCH",
+                "Vault template asset grew beyond the authoritative size during read",
+                false,
+            ));
+        }
+        hasher.update(&buffer[..read]);
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+
+    let observed_sha256 = format!("{:x}", hasher.finalize());
+    if bytes.len() != expected_size || observed_sha256 != asset.sha256 {
+        return Err(HostError::new(
+            "VAULT_ASSET_INTEGRITY_MISMATCH",
+            "Vault template asset content no longer matches the authoritative record",
+            false,
+        ));
+    }
+    Ok((asset, bytes))
+}
+
+/// Reads a ready Vault asset into memory under a caller-provided safety limit.
+/// Integrity verification and byte collection use the same open file handle.
+pub(crate) fn read_verified_asset_limited(
+    connection: &Connection,
+    vault_root: &Path,
+    asset_id: &str,
+    max_size_bytes: u64,
+) -> Result<(AssetRecord, Vec<u8>), HostError> {
+    if max_size_bytes == 0 || max_size_bytes > MAX_ASSET_SIZE_BYTES {
+        return Err(HostError::new(
+            "ASSET_READ_LIMIT_INVALID",
+            "asset read limit must be within the supported Vault asset range",
+            false,
+        ));
+    }
+    let asset = get_asset(connection, asset_id)?;
+    if asset.status != AssetStatus::Ready {
+        return Err(HostError::new(
+            "ASSET_NOT_READY",
+            "asset is not ready for rendering",
+            true,
+        ));
+    }
+    if asset.size_bytes < 0 || asset.size_bytes as u64 > max_size_bytes {
+        return Err(HostError::new(
+            "ASSET_TOO_LARGE",
+            format!("asset exceeds the {max_size_bytes} byte safety limit"),
+            false,
+        ));
+    }
+
+    let path = resolve_original_path(connection, vault_root, asset_id)?;
+    let mut file = File::open(&path)
+        .map_err(|error| vault_io_error("open Vault asset for bounded read", error))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| vault_io_error("inspect Vault asset for bounded read", error))?;
+    if metadata.len() != asset.size_bytes as u64 {
+        return Err(HostError::new(
+            "VAULT_ASSET_INTEGRITY_MISMATCH",
+            "Vault asset size no longer matches the authoritative record",
+            false,
+        ));
+    }
+
+    let expected_size = usize::try_from(asset.size_bytes).map_err(|_| {
+        HostError::new(
+            "ASSET_TOO_LARGE",
+            "asset size cannot be represented in memory",
+            false,
+        )
+    })?;
+    let mut bytes = Vec::with_capacity(expected_size);
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| vault_io_error("read Vault asset into bounded buffer", error))?;
+        if read == 0 {
+            break;
+        }
+        let observed_size = bytes.len().checked_add(read).ok_or_else(|| {
+            HostError::new(
+                "ASSET_TOO_LARGE",
+                "asset size overflowed during bounded read",
+                false,
+            )
+        })?;
+        if observed_size > expected_size || observed_size as u64 > max_size_bytes {
+            return Err(HostError::new(
+                "VAULT_ASSET_INTEGRITY_MISMATCH",
+                "Vault asset grew beyond the authoritative size during read",
+                false,
+            ));
+        }
+        hasher.update(&buffer[..read]);
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+
+    let observed_sha256 = format!("{:x}", hasher.finalize());
+    if bytes.len() != expected_size || observed_sha256 != asset.sha256 {
+        return Err(HostError::new(
+            "VAULT_ASSET_INTEGRITY_MISMATCH",
+            "Vault asset content no longer matches the authoritative record",
+            false,
+        ));
+    }
+    Ok((asset, bytes))
+}
+
 /// Copies a verified asset to a user-selected path without exposing Vault paths to the UI.
 pub(crate) fn export_verified_asset_to_path(
     connection: &Connection,
@@ -1476,6 +1663,15 @@ fn validate_prepared_asset_origin(
         GeneratedArtifactSource::ArchivePackage => {
             asset.kind == AssetKind::Other && asset.mime_type == "application/zip"
         }
+        GeneratedArtifactSource::NormalizedTemplate => {
+            asset.kind == AssetKind::Document
+                && asset.mime_type
+                    == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                && Path::new(&asset.original_name)
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("docx"))
+        }
     };
     if valid {
         Ok(())
@@ -1659,6 +1855,7 @@ fn asset_source_kind_from_db(value: &str) -> Option<AssetSourceKind> {
         ASSET_ORIGIN_GENERATED_PAGE_PREVIEW => Some(AssetSourceKind::GeneratedPagePreview),
         ASSET_ORIGIN_GENERATED_ARCHIVE_MANIFEST => Some(AssetSourceKind::ArchiveManifest),
         ASSET_ORIGIN_GENERATED_ARCHIVE_PACKAGE => Some(AssetSourceKind::ArchivePackage),
+        ASSET_ORIGIN_NORMALIZED_TEMPLATE => Some(AssetSourceKind::NormalizedTemplate),
         _ => None,
     }
 }
@@ -2785,7 +2982,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_upgrades_legacy_origins_and_preserves_existing_sources() {
+    fn migration_adds_normalized_template_origin_and_preserves_existing_sources() {
         let directory = tempdir().unwrap();
         let vault = directory.path().join("vault");
         let user_source = source(directory.path(), "legacy-user.txt", b"legacy user");
@@ -2830,7 +3027,9 @@ mod tests {
                         'businessDocument',
                         'generatedExtractionSnapshot',
                         'generatedReviewReport',
-                        'generatedPagePreview'
+                        'generatedPagePreview',
+                        'generatedArchiveManifest',
+                        'generatedArchivePackage'
                     )),
                     origin_ref TEXT,
                     created_at INTEGER NOT NULL,
@@ -2841,7 +3040,9 @@ mod tests {
                                 'businessDocument',
                                 'generatedExtractionSnapshot',
                                 'generatedReviewReport',
-                                'generatedPagePreview'
+                                'generatedPagePreview',
+                                'generatedArchiveManifest',
+                                'generatedArchivePackage'
                             )
                             AND origin_ref IS NOT NULL
                         )
@@ -2884,10 +3085,175 @@ mod tests {
             .unwrap();
         assert!(schema.contains(ASSET_ORIGIN_GENERATED_ARCHIVE_MANIFEST));
         assert!(schema.contains(ASSET_ORIGIN_GENERATED_ARCHIVE_PACKAGE));
+        assert!(schema.contains(ASSET_ORIGIN_NORMALIZED_TEMPLATE));
         let source_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM asset_origins", [], |row| row.get(0))
             .unwrap();
         assert_eq!(source_count, 3);
+    }
+
+    #[test]
+    fn normalized_template_origin_ref_is_idempotent() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        let first_source = source(
+            directory.path(),
+            "normalized-template.docx",
+            b"PK\x03\x04normalized-template-v1",
+        );
+        let replacement_source = source(
+            directory.path(),
+            "replacement-template.docx",
+            b"PK\x03\x04different-template-bytes",
+        );
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        let imported = import_generated_artifact(
+            &mut connection,
+            &vault,
+            "project-template",
+            &first_source,
+            GeneratedArtifactSource::NormalizedTemplate,
+            "doc-normalize:v1:source-asset:source-sha:word:policy-v1",
+        )
+        .unwrap();
+        let replayed = import_generated_artifact(
+            &mut connection,
+            &vault,
+            "project-template",
+            &replacement_source,
+            GeneratedArtifactSource::NormalizedTemplate,
+            "doc-normalize:v1:source-asset:source-sha:word:policy-v1",
+        )
+        .unwrap();
+
+        assert_eq!(replayed, imported);
+        assert_eq!(list_assets(&connection, None).unwrap().len(), 1);
+        let origin = get_asset_source(&connection, &imported.id).unwrap();
+        assert_eq!(origin.source, AssetSourceKind::NormalizedTemplate);
+        assert_eq!(
+            origin.source_ref.as_deref(),
+            Some("doc-normalize:v1:source-asset:source-sha:word:policy-v1")
+        );
+    }
+
+    #[test]
+    fn normalized_template_rejects_non_docx_outputs() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        let pdf_source = source(
+            directory.path(),
+            "normalized-template.docx",
+            b"%PDF-1.7\nnot-a-docx",
+        );
+        let xlsx_source = source(
+            directory.path(),
+            "normalized-template.xlsx",
+            b"PK\x03\x04spreadsheet-package",
+        );
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        for (source_path, source_ref) in [
+            (pdf_source.as_path(), "normalized-pdf"),
+            (xlsx_source.as_path(), "normalized-xlsx"),
+        ] {
+            let error = import_generated_artifact(
+                &mut connection,
+                &vault,
+                "project-template",
+                source_path,
+                GeneratedArtifactSource::NormalizedTemplate,
+                source_ref,
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "GENERATED_ARTIFACT_TYPE_INVALID");
+        }
+        assert!(list_assets(&connection, None).unwrap().is_empty());
+        assert_eq!(file_count(&vault), 0);
+        assert_eq!(recovery_intent_count(&vault), 0);
+    }
+
+    #[test]
+    fn normalized_template_rejects_cross_project_origin_ref() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        let normalized_source = source(
+            directory.path(),
+            "normalized-template.docx",
+            b"PK\x03\x04normalized-template",
+        );
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        import_generated_artifact(
+            &mut connection,
+            &vault,
+            "project-a",
+            &normalized_source,
+            GeneratedArtifactSource::NormalizedTemplate,
+            "shared-normalization-identity",
+        )
+        .unwrap();
+        let error = import_generated_artifact(
+            &mut connection,
+            &vault,
+            "project-b",
+            &normalized_source,
+            GeneratedArtifactSource::NormalizedTemplate,
+            "shared-normalization-identity",
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "GENERATED_ARTIFACT_SOURCE_CONFLICT");
+        assert_eq!(list_assets(&connection, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn normalized_template_orphan_is_reconciled_after_restart() {
+        let directory = tempdir().unwrap();
+        let database_path = directory.path().join("assets.sqlite3");
+        let vault = directory.path().join("vault");
+        let normalized_source = source(
+            directory.path(),
+            "normalized-template.docx",
+            b"PK\x03\x04restart-recovery-template",
+        );
+
+        let orphan_path = {
+            let mut connection = Connection::open(&database_path).unwrap();
+            migrate(&connection).unwrap();
+            let origin = AssetOrigin::GeneratedArtifact {
+                source: GeneratedArtifactSource::NormalizedTemplate,
+                source_ref: "restart-normalized-template".to_string(),
+            };
+            let mut prepared =
+                prepare_import(&vault, Some("project-restart"), &normalized_source).unwrap();
+            validate_prepared_asset_origin(&prepared.asset, &origin).unwrap();
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            let (_asset, pending) =
+                persist_prepared_asset(&transaction, &mut prepared, &origin).unwrap();
+            let mut pending = pending.expect("new template must create a Vault candidate");
+            let orphan_path = pending.final_path.clone();
+            transaction.rollback().unwrap();
+            pending.preserve_for_recovery();
+            assert!(orphan_path.exists());
+            assert_eq!(recovery_intent_count(&vault), 1);
+            orphan_path
+        };
+
+        let connection = Connection::open(&database_path).unwrap();
+        migrate(&connection).unwrap();
+        reconcile_pending_imports(&connection, &vault).unwrap();
+
+        assert!(!orphan_path.exists());
+        assert!(list_assets(&connection, None).unwrap().is_empty());
+        assert_eq!(recovery_intent_count(&vault), 0);
+        reconcile_pending_imports(&connection, &vault).unwrap();
+        assert_eq!(recovery_intent_count(&vault), 0);
     }
 
     #[test]
@@ -3141,6 +3507,109 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "VAULT_ASSET_INTEGRITY_MISMATCH");
         assert_eq!(fs::read(destination).unwrap(), b"preserve-existing-output");
+    }
+
+    #[test]
+    fn template_asset_read_returns_verified_record_and_bytes() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault-private");
+        let source = source(
+            directory.path(),
+            "contract-template.docx",
+            b"verified-template-bytes",
+        );
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        let asset = import_file(&mut connection, &vault, Some("project-alpha"), &source).unwrap();
+        let (verified, bytes) =
+            read_verified_template_asset(&connection, &vault, &asset.id).unwrap();
+
+        assert_eq!(verified, asset);
+        assert_eq!(bytes, b"verified-template-bytes");
+    }
+
+    #[test]
+    fn bounded_asset_read_returns_verified_record_and_bytes() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault-private");
+        let source = source(directory.path(), "screenshot.png", b"verified-image-bytes");
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        let asset = import_file(&mut connection, &vault, Some("project-alpha"), &source).unwrap();
+        let (verified, bytes) =
+            read_verified_asset_limited(&connection, &vault, &asset.id, 1024).unwrap();
+
+        assert_eq!(verified, asset);
+        assert_eq!(bytes, b"verified-image-bytes");
+    }
+
+    #[test]
+    fn bounded_asset_read_rejects_invalid_or_exceeded_limits() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault-private");
+        let source = source(directory.path(), "screenshot.png", b"verified-image-bytes");
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        let asset = import_file(&mut connection, &vault, Some("project-alpha"), &source).unwrap();
+        let error = read_verified_asset_limited(&connection, &vault, &asset.id, 0).unwrap_err();
+        assert_eq!(error.code, "ASSET_READ_LIMIT_INVALID");
+
+        let error = read_verified_asset_limited(&connection, &vault, &asset.id, 4).unwrap_err();
+        assert_eq!(error.code, "ASSET_TOO_LARGE");
+    }
+
+    #[test]
+    fn template_asset_read_rejects_same_size_tampering() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault-private");
+        let source = source(
+            directory.path(),
+            "service-template.docx",
+            b"authoritative-template",
+        );
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        let asset = import_file(&mut connection, &vault, Some("project-alpha"), &source).unwrap();
+        let native_path = resolve_original_path(&connection, &vault, &asset.id).unwrap();
+        fs::write(native_path, b"tampered-template-byte").unwrap();
+
+        let error = read_verified_template_asset(&connection, &vault, &asset.id).unwrap_err();
+        assert_eq!(error.code, "VAULT_ASSET_INTEGRITY_MISMATCH");
+    }
+
+    #[test]
+    fn template_asset_read_rejects_assets_over_safety_limit() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault-private");
+        let source = source(
+            directory.path(),
+            "oversized-template.xlsx",
+            b"small-template",
+        );
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+
+        let asset = import_file(&mut connection, &vault, Some("project-alpha"), &source).unwrap();
+        let native_path = resolve_original_path(&connection, &vault, &asset.id).unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(native_path)
+            .unwrap()
+            .set_len(MAX_TEMPLATE_ASSET_SIZE_BYTES + 1)
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE assets SET size_bytes = ?1 WHERE id = ?2",
+                params![MAX_TEMPLATE_ASSET_SIZE_BYTES as i64 + 1, asset.id],
+            )
+            .unwrap();
+
+        let error = read_verified_template_asset(&connection, &vault, &asset.id).unwrap_err();
+        assert_eq!(error.code, "TEMPLATE_ASSET_TOO_LARGE");
     }
 
     #[test]

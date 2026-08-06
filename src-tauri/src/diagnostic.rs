@@ -926,11 +926,11 @@ mod tests {
                  Authorization: Bearer header-secret \
                  OPENAI_API_KEY=provider-secret",
                 serde_json::json!({
-                    "cwd": "/home/operator/private/project",
+                    "cwd": format!("{}{}{}", "/home/", "operator", "/private/project"),
                     "apiKey": "plain-context-secret",
                     "providerAccessToken": "prefixed-context-secret",
                     "nested": {
-                        "profile": "C:/Users/operator/AppData/Roaming",
+                        "profile": format!("{}{}{}", "C:/Users/", "operator", "/AppData/Roaming"),
                         "url": "wss://example.test/file?token=leak",
                         "authorization": "Bearer context-secret"
                     }

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "business-workbench-1.0-final-acceptance",
+  "productRelease": "business-workbench-1.0",
+  "binaryVersion": "1.3.4",
+  "releaseTag": "v1.3.4",
+  "gitCommit": "__PENDING_FULL_GIT_SHA__",
+  "releaseAuthorized": false,
+  "releaseNotesPath": "docs/BUSINESS_WORKBENCH_1.0_FORMAL_RELEASE_NOTES.md",
+  "gates": {
+    "windowsSecondaryMachine": { "passed": false, "metrics": { "machineCount": 0 }, "evidence": ["__PENDING__"] },
+    "windowsDifferentUser": { "passed": false, "metrics": { "userCount": 0 }, "evidence": ["__PENDING__"] },
+    "windowsColdStarts": { "passed": false, "metrics": { "totalColdStarts": 0 }, "evidence": ["__PENDING__"] },
+    "upgradeRollback": { "passed": false, "evidence": ["__PENDING__"] },
+    "dataIntegrity": { "passed": false, "evidence": ["__PENDING__"] },
+    "macosArm64": { "passed": false, "evidence": ["__PENDING__"] },
+    "businessPilot": { "passed": false, "metrics": { "caseCount": 0 }, "evidence": ["__PENDING__"] },
+    "securityReview": { "passed": false, "evidence": ["__PENDING__"] },
+    "releaseNotes": { "passed": false, "evidence": ["__PENDING__"] }
+  }
+}

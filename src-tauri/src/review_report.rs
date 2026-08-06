@@ -438,7 +438,7 @@ fn push_docx_paragraph(body: &mut String, text: &str, style: Option<&str>, bold:
 
 fn render_docx_core_properties(payload: &ReviewReportPayload<'_>) -> String {
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>合同审查报告</dc:title><dc:subject>{}</dc:subject><dc:creator>BSAIGC Desktop</dc:creator><cp:keywords>合同审查,{},SHA-256</cp:keywords><dc:description>基于本地合同资产生成的审查报告，来源 SHA-256：{}</dc:description><cp:lastModifiedBy>BSAIGC Desktop</cp:lastModifiedBy><dcterms:created xsi:type=\"dcterms:W3CDTF\">2000-01-01T00:00:00Z</dcterms:created><dcterms:modified xsi:type=\"dcterms:W3CDTF\">2000-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>合同审查报告</dc:title><dc:subject>{}</dc:subject><dc:creator>华邦互娱商务系统</dc:creator><cp:keywords>合同审查,{},SHA-256</cp:keywords><dc:description>基于本地合同资产生成的审查报告，来源 SHA-256：{}</dc:description><cp:lastModifiedBy>华邦互娱商务系统</cp:lastModifiedBy><dcterms:created xsi:type=\"dcterms:W3CDTF\">2000-01-01T00:00:00Z</dcterms:created><dcterms:modified xsi:type=\"dcterms:W3CDTF\">2000-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>",
         escape_xml(payload.report_id),
         escape_xml(payload.review_id),
         escape_xml(payload.source_asset_sha256)
@@ -495,9 +495,9 @@ const DOCX_DOCUMENT_RELATIONSHIPS: &str = r#"<?xml version="1.0" encoding="UTF-8
 
 const DOCX_APP_PROPERTIES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
-  <Application>BSAIGC Desktop</Application>
+  <Application>华邦互娱商务系统</Application>
   <AppVersion>1.0</AppVersion>
-  <Company>半山AIGC</Company>
+  <Company>华邦互娱</Company>
 </Properties>"#;
 
 const DOCX_STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

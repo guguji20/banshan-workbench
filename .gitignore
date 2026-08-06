@@ -4,6 +4,9 @@ dist/
 dist-ssr/
 _upload/
 src-tauri/target/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 *.local
 *.log
 
@@ -20,6 +23,7 @@ src-tauri/target/
 
 # Local runtime authority (never commit user data)
 .runtime/
+docs/visual/
 *.sqlite
 *.sqlite3
 *.db

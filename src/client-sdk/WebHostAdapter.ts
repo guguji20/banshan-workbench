@@ -130,6 +130,10 @@ export class WebHostAdapter implements HostAdapter {
     return Promise.reject(this.unavailable());
   }
 
+  authLoginRemembered(): Promise<AuthStatus> {
+    return Promise.reject(this.unavailable());
+  }
+
   authLogout(): Promise<AuthStatus> {
     return Promise.reject(this.unavailable());
   }

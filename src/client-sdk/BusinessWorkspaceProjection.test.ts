@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BusinessProfile } from "../generated/bsaigc/BusinessProfile";
+import type { BusinessSettlementBatchRecord } from "../generated/bsaigc/BusinessSettlementBatchRecord";
 import type { BusinessWorkspaceDomainEvent } from "../generated/bsaigc/BusinessWorkspaceDomainEvent";
 import type { BusinessWorkspaceRecord } from "../generated/bsaigc/BusinessWorkspaceRecord";
 import { BusinessWorkspaceProjection } from "./BusinessWorkspaceProjection";
@@ -23,6 +24,9 @@ const PROFILE: BusinessProfile = {
   supplierBankAccount: "1000000001",
   currency: "CNY",
   defaultTaxRateBps: 600,
+  taxMode: "taxExclusive",
+  projectDiscountCents: 0,
+  quotationTotals: null,
   serviceStartAt: null,
   serviceEndAt: null,
   deliverySummary: "Launch film",
@@ -70,6 +74,9 @@ function businessWorkspace(
     quoteConfirmations: [],
     receipts: [],
     milestones: [],
+    settlementBatches: [],
+    acceptanceBatches: [],
+    templateVersions: [],
     deliverySubmissions: [],
     invoices: [],
     archiveSnapshots: [],
@@ -339,6 +346,97 @@ describe("BusinessWorkspaceProjection", () => {
       archiveSnapshots: [{ id: "archive-1", manifestAssetId: null }],
       archiveIntegrityStatus: "ready",
       revision: 2,
+    });
+  });
+
+  it("projects settlement batch upserts and voids from workspace events", () => {
+    const projection = new BusinessWorkspaceProjection();
+    const settlementBatch: BusinessSettlementBatchRecord = {
+      id: "settlement-q1",
+      workspaceId: "workspace-settlement",
+      contractNumber: "ANNUAL-2026-001",
+      settlementPeriod: "2026-Q1",
+      cadence: "quarterly",
+      status: "confirmed",
+      lines: [
+        {
+          deliverableId: "deliverable-q1",
+          milestoneId: "milestone-q1",
+          deliverableName: "Quarter one delivery",
+          contractQuantityMillis: 12_000,
+          cumulativeExecutedMillis: 3_000,
+          currentExecutedMillis: 3_000,
+          cumulativeAcceptedMillis: 3_000,
+          currentAcceptedMillis: 3_000,
+          cumulativeSettledMillis: 3_000,
+          currentSettlementMillis: 3_000,
+          remainingQuantityMillis: 9_000,
+          unit: "item",
+          notes: "Accepted Q1 output",
+        },
+      ],
+      notes: "Quarterly settlement",
+      revision: 1,
+      createdAt: 10,
+      updatedAt: 10,
+      voidedAt: null,
+      voidedBy: null,
+      voidReason: "",
+    };
+    const upsertedWorkspace = {
+      ...businessWorkspace("workspace-settlement", 2, 10),
+      settlementBatches: [settlementBatch],
+    };
+
+    expect(
+      projection.applyEvent({
+        ...event(1, 2, "workspace-settlement"),
+        eventType: "businessWorkspace.settlementBatchUpserted",
+        businessWorkspace: upsertedWorkspace,
+      }),
+    ).toBe(true);
+    expect(projection.snapshot().businessWorkspaces[0]?.settlementBatches).toEqual([
+      settlementBatch,
+    ]);
+
+    const voidedBatch: BusinessSettlementBatchRecord = {
+      ...settlementBatch,
+      status: "voided",
+      revision: 2,
+      updatedAt: 20,
+      voidedAt: 20,
+      voidedBy: "operator-1",
+      voidReason: "Incorrect accepted quantity",
+    };
+    expect(
+      projection.applyEvent({
+        ...event(2, 3, "workspace-settlement"),
+        eventType: "businessWorkspace.settlementBatchVoided",
+        businessWorkspace: {
+          ...upsertedWorkspace,
+          settlementBatches: [voidedBatch],
+          revision: 3,
+          updatedAt: 20,
+        },
+      }),
+    ).toBe(true);
+    expect(projection.snapshot()).toMatchObject({
+      lastSequence: 2,
+      businessWorkspaces: [
+        {
+          id: "workspace-settlement",
+          revision: 3,
+          settlementBatches: [
+            {
+              id: "settlement-q1",
+              status: "voided",
+              revision: 2,
+              voidedBy: "operator-1",
+              voidReason: "Incorrect accepted quantity",
+            },
+          ],
+        },
+      ],
     });
   });
 

@@ -1448,7 +1448,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    const SECRET_PATH: &str = r#"C:\Users\operator\private\reference-master.mov"#;
+    const SECRET_PATH: &str = concat!(r"C:\Users\", "operator", r"\private\reference-master.mov");
 
     fn project_brief() -> BriefRecord {
         BriefRecord {

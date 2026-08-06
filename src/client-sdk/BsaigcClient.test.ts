@@ -32,6 +32,12 @@ import type { CaseCommandEnvelope } from "../generated/bsaigc/CaseCommandEnvelop
 import type { CaseCommandResponse } from "../generated/bsaigc/CaseCommandResponse";
 import type { CaseDomainEvent } from "../generated/bsaigc/CaseDomainEvent";
 import type { CaseRecord } from "../generated/bsaigc/CaseRecord";
+import type { SharedCaseCommandEnvelope } from "../generated/bsaigc/SharedCaseCommandEnvelope";
+import type { SharedCaseCommandResponse } from "../generated/bsaigc/SharedCaseCommandResponse";
+import type { SharedCaseDomainEvent } from "../generated/bsaigc/SharedCaseDomainEvent";
+import type { SharedCaseGrant } from "../generated/bsaigc/SharedCaseGrant";
+import type { SharedCasePublicationRecord } from "../generated/bsaigc/SharedCasePublicationRecord";
+import type { ReplayEventsRequest } from "../generated/bsaigc/ReplayEventsRequest";
 import type { CreateCasePayload } from "../generated/bsaigc/CreateCasePayload";
 import type { UpdateCasePayload } from "../generated/bsaigc/UpdateCasePayload";
 import type { CreateExecutionBriefPayload } from "../generated/bsaigc/CreateExecutionBriefPayload";
@@ -51,6 +57,14 @@ import type { UpdateRequirementBriefPayload } from "../generated/bsaigc/UpdateRe
 import type { BusinessCustomerReceivableSummary } from "../generated/bsaigc/BusinessCustomerReceivableSummary";
 import type { BusinessProfileInput } from "../generated/bsaigc/BusinessProfileInput";
 import type { BusinessWorkspaceCommandEnvelope } from "../generated/bsaigc/BusinessWorkspaceCommandEnvelope";
+import type { ApproveBusinessTemplateVersionPayload } from "../generated/bsaigc/ApproveBusinessTemplateVersionPayload";
+import type { CreateBusinessAcceptanceBatchPayload } from "../generated/bsaigc/CreateBusinessAcceptanceBatchPayload";
+import type { NormalizeBusinessLegacyTemplatePayload } from "../generated/bsaigc/NormalizeBusinessLegacyTemplatePayload";
+import type { PrepareBusinessAcceptanceDocumentsPayload } from "../generated/bsaigc/PrepareBusinessAcceptanceDocumentsPayload";
+import type { RejectBusinessTemplateVersionPayload } from "../generated/bsaigc/RejectBusinessTemplateVersionPayload";
+import type { UpsertBusinessAcceptanceMaterialPayload } from "../generated/bsaigc/UpsertBusinessAcceptanceMaterialPayload";
+import type { UpsertBusinessSettlementBatchPayload } from "../generated/bsaigc/UpsertBusinessSettlementBatchPayload";
+import type { VoidBusinessSettlementBatchPayload } from "../generated/bsaigc/VoidBusinessSettlementBatchPayload";
 import type { BusinessWorkspaceCommandResponse } from "../generated/bsaigc/BusinessWorkspaceCommandResponse";
 import type { BusinessWorkspaceDomainEvent } from "../generated/bsaigc/BusinessWorkspaceDomainEvent";
 import type { BusinessWorkspacePrefillCandidate } from "../generated/bsaigc/BusinessWorkspacePrefillCandidate";
@@ -434,6 +448,8 @@ const BUSINESS_PROFILE_INPUT: BusinessProfileInput = {
   supplierBankAccount: "1000000001",
   currency: "CNY",
   defaultTaxRateBps: 600,
+  taxMode: "taxExclusive",
+  projectDiscountCents: 0,
   serviceStartAt: null,
   serviceEndAt: null,
   deliverySummary: "Launch film",
@@ -473,12 +489,15 @@ function businessWorkspaceRecord(
     requirementBriefId: null,
     requirementBriefRevision: null,
     prefillSourceWorkspaceId: null,
-    profile: { ...BUSINESS_PROFILE_INPUT, lineItems: [] },
+    profile: { ...BUSINESS_PROFILE_INPUT, quotationTotals: null, lineItems: [] },
     documents: [],
+    templateVersions: [],
     payments: [],
     quoteConfirmations: [],
     receipts: [],
     milestones: [],
+    settlementBatches: [],
+    acceptanceBatches: [],
     deliverySubmissions: [],
     invoices: [],
     archiveSnapshots: [],
@@ -818,6 +837,9 @@ class FakeHostAdapter implements HostAdapter {
   authLogin() {
     return this.authStatus();
   }
+  authLoginRemembered() {
+    return this.authStatus();
+  }
   authLogout() {
     return this.authStatus();
   }
@@ -862,6 +884,7 @@ class FakeHostAdapter implements HostAdapter {
   readonly businessWorkspaceReplayCalls: Array<[number, number]> = [];
   readonly contractReviewReplayCalls: Array<[number, number]> = [];
   readonly backupReplayCalls: Array<[number, number]> = [];
+  readonly sharedCaseReplayRequests: ReplayEventsRequest[] = [];
   readonly commands: CommandEnvelope[] = [];
   readonly taskCommands: TaskCommandEnvelope[] = [];
   readonly assetCommands: AssetCommandEnvelope[] = [];
@@ -869,6 +892,7 @@ class FakeHostAdapter implements HostAdapter {
   readonly executionBriefCommands: ExecutionBriefCommandEnvelope[] = [];
   readonly requirementBriefCommands: RequirementBriefCommandEnvelope[] = [];
   readonly businessWorkspaceCommands: BusinessWorkspaceCommandEnvelope[] = [];
+  readonly sharedCaseCommands: SharedCaseCommandEnvelope[] = [];
   readonly contractReviewCommands: ContractReviewCommandEnvelope[] = [];
   readonly backupCommands: BackupCommandEnvelope[] = [];
   readonly aiCredentialCommands: AiCredentialCommandEnvelope[] = [];
@@ -894,6 +918,8 @@ class FakeHostAdapter implements HostAdapter {
   requirementBriefs: RequirementBriefRecord[] = [];
   requirementBriefEvents: RequirementBriefDomainEvent[] = [];
   businessWorkspaces: BusinessWorkspaceRecord[] = [];
+  sharedCases: SharedCasePublicationRecord[] = [];
+  sharedCaseEvents: SharedCaseDomainEvent[] = [];
   businessCustomers: BusinessCustomerReceivableSummary[] = [];
   businessWorkspaceEvents: BusinessWorkspaceDomainEvent[] = [];
   contractReviews: ContractReviewRecord[] = [CONTRACT_REVIEW];
@@ -1338,6 +1364,57 @@ class FakeHostAdapter implements HostAdapter {
           payment,
         ],
       };
+    } else if (command.commandType === "businessWorkspace.upsertSettlementBatch") {
+      const input = command.payload.batch;
+      const batchId = input.id ?? "settlement-batch-1";
+      const currentBatch = record.settlementBatches.find(({ id }) => id === batchId);
+      const settlementBatch: BusinessWorkspaceRecord["settlementBatches"][number] = {
+        id: batchId,
+        workspaceId: command.payload.workspaceId,
+        contractNumber: input.contractNumber,
+        settlementPeriod: input.settlementPeriod,
+        cadence: input.cadence,
+        status: input.status,
+        lines: input.lines.map((line) => ({
+          ...line,
+          milestoneId: "milestone-1",
+          deliverableName: line.deliverableId,
+          cumulativeSettledMillis: line.currentSettlementMillis,
+          remainingQuantityMillis:
+            line.contractQuantityMillis - line.currentSettlementMillis,
+        })),
+        notes: input.notes,
+        revision: (currentBatch?.revision ?? 0) + 1,
+        createdAt: currentBatch?.createdAt ?? revision,
+        updatedAt: revision,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: "",
+      };
+      record = {
+        ...record,
+        settlementBatches: [
+          ...record.settlementBatches.filter(({ id }) => id !== settlementBatch.id),
+          settlementBatch,
+        ],
+      };
+    } else if (command.commandType === "businessWorkspace.voidSettlementBatch") {
+      record = {
+        ...record,
+        settlementBatches: record.settlementBatches.map((batch) =>
+          batch.id === command.payload.batchId
+            ? {
+                ...batch,
+                status: "voided",
+                revision: batch.revision + 1,
+                updatedAt: revision,
+                voidedAt: revision,
+                voidedBy: command.context.actorId,
+                voidReason: command.payload.reason,
+              }
+            : batch,
+        ),
+      };
     } else if (command.commandType === "businessWorkspace.createDocument") {
       const payment =
         command.payload.paymentId === null
@@ -1357,6 +1434,16 @@ class FakeHostAdapter implements HostAdapter {
         status: "draft",
         snapshot: {
           workspaceRevision: command.expectedRevision ?? record.revision,
+          acceptanceBatchId: command.payload.acceptanceBatchId,
+          acceptanceOutputSpecId: null,
+          acceptanceBatchRevision: null,
+          materialBindings: [],
+          templateAssetId: null,
+          templateSourceSha256: null,
+          templateMappingVersion: "",
+          contractSettlement: null,
+          serviceSettlementItems: [],
+          paymentApplication: null,
           customerId: record.customerId,
           customer: { ...record.customer },
           profile: {
@@ -1409,6 +1496,71 @@ class FakeHostAdapter implements HostAdapter {
 
   listBusinessWorkspaces(): Promise<BusinessWorkspaceRecord[]> {
     return this.listBusinessWorkspacesImpl();
+  }
+
+  executeSharedCaseCommand(
+    command: SharedCaseCommandEnvelope,
+  ): Promise<SharedCaseCommandResponse> {
+    this.sharedCaseCommands.push(command);
+    const revision =
+      command.expectedRevision === null ? 1 : command.expectedRevision + 1;
+    const publicationId =
+      command.commandType === "sharedCase.publish"
+        ? "shared-publication-1"
+        : command.payload.publicationId;
+    const existing = this.sharedCases.find(({ id }) => id === publicationId);
+    const publication: SharedCasePublicationRecord = {
+      id: publicationId,
+      caseId:
+        command.commandType === "sharedCase.publish"
+          ? command.payload.caseId
+          : (existing?.caseId ?? "case-1"),
+      assetId: existing?.assetId ?? "asset-case-1",
+      projectId: command.context.projectId,
+      title: existing?.title ?? "Shared case",
+      clientName: existing?.clientName ?? "Client",
+      contentSha256: existing?.contentSha256 ?? "a".repeat(64),
+      remoteObjectKey: existing?.remoteObjectKey ?? "shared/case-1",
+      remoteEtag: existing?.remoteEtag ?? "etag-1",
+      status:
+        command.commandType === "sharedCase.withdraw" ? "withdrawn" : "published",
+      publisherUsername: existing?.publisherUsername ?? command.context.actorId,
+      grants:
+        command.commandType === "sharedCase.publish" ||
+        command.commandType === "sharedCase.updateGrants"
+          ? command.payload.grants
+          : (existing?.grants ?? []),
+      revision,
+      createdAt: existing?.createdAt ?? 1,
+      updatedAt: revision,
+      publishedAt:
+        command.commandType === "sharedCase.withdraw"
+          ? (existing?.publishedAt ?? 1)
+          : (existing?.publishedAt ?? revision),
+      withdrawnAt:
+        command.commandType === "sharedCase.withdraw" ? revision : null,
+    };
+    this.sharedCases = [publication];
+    return Promise.resolve({
+      receipt: receiptFor(command, publication.id, revision),
+      publication,
+      replayed: false,
+    });
+  }
+
+  listAuthorizedSharedCases(): Promise<SharedCasePublicationRecord[]> {
+    return Promise.resolve(this.sharedCases);
+  }
+
+  replaySharedCaseEvents(
+    request: ReplayEventsRequest,
+  ): Promise<SharedCaseDomainEvent[]> {
+    this.sharedCaseReplayRequests.push(request);
+    return Promise.resolve(
+      this.sharedCaseEvents
+        .filter(({ sequence }) => sequence > request.afterSequence)
+        .slice(0, request.limit),
+    );
   }
 
   listBusinessCustomers(
@@ -1809,6 +1961,7 @@ function receiptFor(
     | ExecutionBriefCommandEnvelope
     | RequirementBriefCommandEnvelope
     | BusinessWorkspaceCommandEnvelope
+    | SharedCaseCommandEnvelope
     | ContractReviewCommandEnvelope
     | BackupCommandEnvelope
     | AiCredentialCommandEnvelope
@@ -1839,6 +1992,20 @@ function deferred<T>(): {
 }
 
 describe("BsaigcClient", () => {
+  it("publishes brain thread archive changes to the snapshot immediately", async () => {
+    const client = new BsaigcClient(new FakeHostAdapter());
+
+    await client.brainThreadArchive("thread-1", true);
+    expect(client.getSnapshot().brainThreads).toEqual([
+      expect.objectContaining({ id: "thread-1", status: "archived" }),
+    ]);
+
+    await client.brainThreadArchive("thread-1", false);
+    expect(client.getSnapshot().brainThreads).toEqual([
+      expect.objectContaining({ id: "thread-1", status: "ready" }),
+    ]);
+  });
+
   it("executes typed AI credential commands without exposing the key in snapshots", async () => {
     const host = new FakeHostAdapter();
     const client = new BsaigcClient(host, { actorId: "operator-1", windowId: "main" });
@@ -3269,6 +3436,7 @@ describe("BsaigcClient", () => {
         title: "Launch deposit request",
         templateKey: "builtin.payment-request.standard.v1",
         paymentId: payment.id,
+        acceptanceBatchId: null,
       },
       3,
     );
@@ -3392,6 +3560,132 @@ describe("BsaigcClient", () => {
       ),
     ).toThrow("expectedRevision must be a positive integer");
     expect(host.businessWorkspaceCommands).toHaveLength(7);
+  });
+
+  it("builds settlement batch commands with revision, idempotency, and projection updates", async () => {
+    const host = new FakeHostAdapter();
+    host.businessWorkspaces = [businessWorkspaceRecord(20, "annual-project")];
+    const client = new BsaigcClient(host, {
+      actorId: "settlement-operator",
+      accountId: "agency-1",
+      windowId: "annual-settlement",
+      now: () => 100_000,
+    });
+    await client.start();
+
+    const upsertPayload: UpsertBusinessSettlementBatchPayload = {
+      workspaceId: "workspace-1",
+      batch: {
+        id: null,
+        contractNumber: "ANNUAL-2026-001",
+        settlementPeriod: "2026-Q1",
+        cadence: "quarterly",
+        status: "confirmed",
+        lines: [
+          {
+            deliverableId: "deliverable-q1",
+            contractQuantityMillis: 12_000,
+            cumulativeExecutedMillis: 3_000,
+            currentExecutedMillis: 3_000,
+            cumulativeAcceptedMillis: 3_000,
+            currentAcceptedMillis: 3_000,
+            currentSettlementMillis: 3_000,
+            unit: "item",
+            notes: "Q1 accepted delivery",
+          },
+        ],
+        notes: "First quarterly settlement",
+      },
+    };
+    const upsertResponse = await client.upsertBusinessSettlementBatch(
+      upsertPayload,
+      20,
+      {
+        commandId: "settlement-upsert-command",
+        traceId: "settlement-upsert-trace",
+        idempotencyKey: "settlement-upsert-idempotency",
+        deadlineAt: 130_000,
+      },
+    );
+    const batchId = upsertResponse.businessWorkspace.settlementBatches[0].id;
+    const voidPayload: VoidBusinessSettlementBatchPayload = {
+      workspaceId: "workspace-1",
+      batchId,
+      reason: "Replace incorrect quarterly quantity",
+    };
+    await client.voidBusinessSettlementBatch(voidPayload, 21, {
+      commandId: "settlement-void-command",
+      traceId: "settlement-void-trace",
+      idempotencyKey: "settlement-void-idempotency",
+      deadlineAt: null,
+    });
+
+    expect(host.businessWorkspaceCommands.slice(-2)).toEqual([
+      {
+        commandType: "businessWorkspace.upsertSettlementBatch",
+        commandId: "settlement-upsert-command",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "settlement-operator",
+          accountId: "agency-1",
+          projectId: "annual-project",
+          windowId: "annual-settlement",
+          traceId: "settlement-upsert-trace",
+        },
+        payload: upsertPayload,
+        idempotencyKey: "settlement-upsert-idempotency",
+        expectedRevision: 20,
+        deadlineAt: 130_000,
+      },
+      {
+        commandType: "businessWorkspace.voidSettlementBatch",
+        commandId: "settlement-void-command",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "settlement-operator",
+          accountId: "agency-1",
+          projectId: "annual-project",
+          windowId: "annual-settlement",
+          traceId: "settlement-void-trace",
+        },
+        payload: voidPayload,
+        idempotencyKey: "settlement-void-idempotency",
+        expectedRevision: 21,
+        deadlineAt: null,
+      },
+    ]);
+    expect(client.getSnapshot().businessWorkspaces[0]).toMatchObject({
+      revision: 22,
+      settlementBatches: [
+        {
+          id: "settlement-batch-1",
+          workspaceId: "workspace-1",
+          contractNumber: "ANNUAL-2026-001",
+          settlementPeriod: "2026-Q1",
+          cadence: "quarterly",
+          status: "voided",
+          revision: 2,
+          voidedBy: "settlement-operator",
+          voidReason: "Replace incorrect quarterly quantity",
+          lines: [
+            {
+              deliverableId: "deliverable-q1",
+              cumulativeSettledMillis: 3_000,
+              currentSettlementMillis: 3_000,
+              remainingQuantityMillis: 9_000,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(() =>
+      client.upsertBusinessSettlementBatch(upsertPayload, 0),
+    ).toThrow("expectedRevision must be a positive integer");
+    expect(() =>
+      client.voidBusinessSettlementBatch(voidPayload, 0),
+    ).toThrow("expectedRevision must be a positive integer");
+    expect(host.businessWorkspaceCommands).toHaveLength(2);
   });
 
   it("builds every 1.6 customer, delivery, invoice, and archive command as durable JSON", async () => {
@@ -3591,6 +3885,260 @@ describe("BsaigcClient", () => {
       ),
     ).toThrow("expectedRevision must be a positive integer");
     expect(host.businessWorkspaceCommands).toHaveLength(10);
+  });
+
+  it("builds acceptance batch and material commands with durable operation context", async () => {
+    const host = new FakeHostAdapter();
+    host.businessWorkspaces = [businessWorkspaceRecord(10, "acceptance-project")];
+    const executeSpy = vi.spyOn(host, "executeBusinessWorkspaceCommand");
+    const client = new BsaigcClient(host, {
+      actorId: "acceptance-operator",
+      accountId: "agency-1",
+      windowId: "acceptance-workspace",
+      now: () => 75_000,
+    });
+    await client.start();
+
+    const batchPayload: CreateBusinessAcceptanceBatchPayload = {
+      workspaceId: "workspace-1",
+      label: "White Goose Pond acceptance",
+      requirements: [
+        {
+          id: null,
+          label: "Final video groups",
+          kind: "video",
+          requiredGroupCount: 4,
+        },
+      ],
+      outputSpecs: [
+        {
+          id: null,
+          outputCode: "video-acceptance",
+          documentNumber: "ACCEPT-001",
+          title: "Acceptance report",
+          templateKey: "builtin.acceptance.standard.v1",
+          templateAssetId: null,
+          templateSourceSha256: null,
+          templateMappingVersion: "",
+          contractSettlement: null,
+          serviceSettlementItems: [],
+          paymentApplication: null,
+          format: "docx",
+          requirementIds: ["acceptance-requirement-1"],
+        },
+      ],
+    };
+    const preparePayload: PrepareBusinessAcceptanceDocumentsPayload = {
+      workspaceId: "workspace-1",
+      batchId: "acceptance-batch-1",
+    };
+    const materialPayload: UpsertBusinessAcceptanceMaterialPayload = {
+      workspaceId: "workspace-1",
+      batchId: "acceptance-batch-1",
+      material: {
+        id: null,
+        requirementId: "acceptance-requirement-1",
+        assetId: "asset-video-group-1",
+        kind: "video",
+        groupKey: "video-group-1",
+        confirmed: true,
+        duplicateOfMaterialId: null,
+        notes: "Customer-confirmed final cut",
+      },
+    };
+
+    const batchResponse = await client.createBusinessAcceptanceBatch(
+      batchPayload,
+      10,
+      {
+        commandId: "acceptance-batch-command",
+        traceId: "acceptance-batch-trace",
+        idempotencyKey: "acceptance-batch-idem",
+        deadlineMs: 5_000,
+      },
+    );
+    const prepareResponse = await client.prepareBusinessAcceptanceDocuments(
+      preparePayload,
+      11,
+      {
+        commandId: "acceptance-prepare-command",
+        traceId: "acceptance-prepare-trace",
+        idempotencyKey: "acceptance-prepare-idem",
+        deadlineMs: 10_000,
+      },
+    );
+    const materialResponse = await client.upsertBusinessAcceptanceMaterial(
+      materialPayload,
+      12,
+      {
+        commandId: "acceptance-material-command",
+        traceId: "acceptance-material-trace",
+        idempotencyKey: "acceptance-material-idem",
+        deadlineAt: null,
+      },
+    );
+
+    const acceptanceCommands = host.businessWorkspaceCommands.slice(-3);
+    expect(acceptanceCommands).toEqual([
+      {
+        commandType: "businessWorkspace.createAcceptanceBatch",
+        commandId: "acceptance-batch-command",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "acceptance-operator",
+          accountId: "agency-1",
+          projectId: "acceptance-project",
+          windowId: "acceptance-workspace",
+          traceId: "acceptance-batch-trace",
+        },
+        payload: batchPayload,
+        idempotencyKey: "acceptance-batch-idem",
+        expectedRevision: 10,
+        deadlineAt: 80_000,
+      },
+      {
+        commandType: "businessWorkspace.prepareAcceptanceDocuments",
+        commandId: "acceptance-prepare-command",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "acceptance-operator",
+          accountId: "agency-1",
+          projectId: "acceptance-project",
+          windowId: "acceptance-workspace",
+          traceId: "acceptance-prepare-trace",
+        },
+        payload: preparePayload,
+        idempotencyKey: "acceptance-prepare-idem",
+        expectedRevision: 11,
+        deadlineAt: 85_000,
+      },
+      {
+        commandType: "businessWorkspace.upsertAcceptanceMaterial",
+        commandId: "acceptance-material-command",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "acceptance-operator",
+          accountId: "agency-1",
+          projectId: "acceptance-project",
+          windowId: "acceptance-workspace",
+          traceId: "acceptance-material-trace",
+        },
+        payload: materialPayload,
+        idempotencyKey: "acceptance-material-idem",
+        expectedRevision: 12,
+        deadlineAt: null,
+      },
+    ]);
+    expect(batchResponse).toBe(await executeSpy.mock.results[0]?.value);
+    expect(prepareResponse).toBe(await executeSpy.mock.results[1]?.value);
+    expect(materialResponse).toBe(await executeSpy.mock.results[2]?.value);
+  });
+
+  it("builds legacy template normalization and review commands", async () => {
+    const host = new FakeHostAdapter();
+    host.businessWorkspaces = [businessWorkspaceRecord(20, "template-project")];
+    const client = new BsaigcClient(host, {
+      actorId: "template-operator",
+      accountId: "agency-1",
+      windowId: "template-workspace",
+      now: () => 90_000,
+      uuid: (() => {
+        let next = 0;
+        return () => `template-uuid-${++next}`;
+      })(),
+    });
+    await client.start();
+
+    const normalizePayload: NormalizeBusinessLegacyTemplatePayload = {
+      workspaceId: "workspace-1",
+      sourceAssetId: "asset-legacy-doc",
+      expectedSourceSha256: "a".repeat(64),
+      templateKey: "customer.payment-settlement.v1",
+      mappingVersion: "payment-settlement.v1",
+    };
+    const approvePayload: ApproveBusinessTemplateVersionPayload = {
+      workspaceId: "workspace-1",
+      templateVersionId: "template-version-1",
+      note: "Validated against the source document",
+    };
+    const rejectPayload: RejectBusinessTemplateVersionPayload = {
+      workspaceId: "workspace-1",
+      templateVersionId: "template-version-2",
+      note: "Sensitive sample values remain",
+    };
+
+    await client.normalizeBusinessLegacyTemplate(normalizePayload, 20);
+    await client.approveBusinessTemplateVersion(approvePayload, 21, {
+      commandId: "approve-template-command",
+      traceId: "approve-template-trace",
+      idempotencyKey: "approve-template-idempotency",
+      deadlineAt: null,
+    });
+    await client.rejectBusinessTemplateVersion(rejectPayload, 22, {
+      deadlineMs: 5_000,
+    });
+
+    expect(host.businessWorkspaceCommands).toEqual([
+      {
+        commandType: "businessWorkspace.normalizeLegacyTemplate",
+        commandId: "template-uuid-2",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "template-operator",
+          accountId: "agency-1",
+          projectId: "template-project",
+          windowId: "template-workspace",
+          traceId: "template-uuid-1",
+        },
+        payload: normalizePayload,
+        idempotencyKey: "template-uuid-3",
+        expectedRevision: 20,
+        deadlineAt: 120_000,
+      },
+      {
+        commandType: "businessWorkspace.approveTemplateVersion",
+        commandId: "approve-template-command",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "template-operator",
+          accountId: "agency-1",
+          projectId: "template-project",
+          windowId: "template-workspace",
+          traceId: "approve-template-trace",
+        },
+        payload: approvePayload,
+        idempotencyKey: "approve-template-idempotency",
+        expectedRevision: 21,
+        deadlineAt: null,
+      },
+      {
+        commandType: "businessWorkspace.rejectTemplateVersion",
+        commandId: "template-uuid-5",
+        protocolVersion: "1.6",
+        context: {
+          actorId: "template-operator",
+          accountId: "agency-1",
+          projectId: "template-project",
+          windowId: "template-workspace",
+          traceId: "template-uuid-4",
+        },
+        payload: rejectPayload,
+        idempotencyKey: "template-uuid-6",
+        expectedRevision: 22,
+        deadlineAt: 95_000,
+      },
+    ]);
+
+    expect(() =>
+      client.normalizeBusinessLegacyTemplate(normalizePayload, 0),
+    ).toThrow("expectedRevision must be a positive integer");
+    expect(() =>
+      client.approveBusinessTemplateVersion(approvePayload, 0),
+    ).toThrow("expectedRevision must be a positive integer");
+    expect(() =>
+      client.rejectBusinessTemplateVersion(rejectPayload, 0),
+    ).toThrow("expectedRevision must be a positive integer");
+    expect(host.businessWorkspaceCommands).toHaveLength(3);
   });
 
   it("builds contract review commands and forwards review queries, replay, and events", async () => {
@@ -3838,7 +4386,106 @@ describe("BsaigcClient", () => {
     expect(publicJson).not.toMatch(/r2Url|credential|secret|accessKey/i);
   });
 
-  it("rejects invalid contract review and backup revisions, limits, and replay cursors", async () => {
+  it("builds shared case commands and lists only host-authorized publications", async () => {
+    const host = new FakeHostAdapter();
+    const client = new BsaigcClient(host, {
+      actorId: "shared-case-admin",
+      accountId: "agency-1",
+      windowId: "business-workbench",
+      now: () => 40_000,
+    });
+    const initialGrants: SharedCaseGrant[] = [
+      {
+        username: "member",
+        permissions: ["discover", "preview"],
+      },
+    ];
+
+    await client.publishSharedCase(
+      { caseId: "case-1", grants: initialGrants },
+      null,
+      {
+        projectId: "project-1",
+        commandId: "shared-publish-command",
+        traceId: "shared-publish-trace",
+        idempotencyKey: "shared-publish-idempotency",
+        deadlineMs: 3_000,
+      },
+    );
+    await client.updateSharedCaseGrants(
+      {
+        publicationId: "shared-publication-1",
+        grants: [
+          {
+            username: "member",
+            permissions: ["discover", "preview", "reference", "download"],
+          },
+        ],
+      },
+      1,
+      { projectId: "project-1" },
+    );
+    await client.withdrawSharedCase(
+      { publicationId: "shared-publication-1" },
+      2,
+      { projectId: "project-1" },
+    );
+
+    expect(host.sharedCaseCommands[0]).toEqual({
+      commandType: "sharedCase.publish",
+      commandId: "shared-publish-command",
+      protocolVersion: "1.5",
+      context: {
+        actorId: "shared-case-admin",
+        accountId: "agency-1",
+        projectId: "project-1",
+        windowId: "business-workbench",
+        traceId: "shared-publish-trace",
+      },
+      payload: { caseId: "case-1", grants: initialGrants },
+      idempotencyKey: "shared-publish-idempotency",
+      expectedRevision: null,
+      deadlineAt: 43_000,
+    });
+    expect(
+      host.sharedCaseCommands.map(({ commandType, expectedRevision }) => ({
+        commandType,
+        expectedRevision,
+      })),
+    ).toEqual([
+      { commandType: "sharedCase.publish", expectedRevision: null },
+      { commandType: "sharedCase.updateGrants", expectedRevision: 1 },
+      { commandType: "sharedCase.withdraw", expectedRevision: 2 },
+    ]);
+    await expect(client.listAuthorizedSharedCases()).resolves.toEqual(
+      host.sharedCases,
+    );
+    const sharedCaseEvent: SharedCaseDomainEvent = {
+      sequence: 7,
+      eventId: "shared-case-event-7",
+      eventType: "sharedCase.withdrawn",
+      aggregateId: host.sharedCases[0].id,
+      revision: host.sharedCases[0].revision,
+      occurredAt: 50_000,
+      traceId: "shared-case-event-trace",
+      publication: host.sharedCases[0],
+    };
+    host.sharedCaseEvents = [sharedCaseEvent];
+    await expect(client.replaySharedCaseEvents(0, 25)).resolves.toEqual([
+      sharedCaseEvent,
+    ]);
+    expect(host.sharedCaseReplayRequests).toEqual([
+      { afterSequence: 0, limit: 25 },
+    ]);
+    expect(host.sharedCases[0]).toMatchObject({
+      id: "shared-publication-1",
+      status: "withdrawn",
+      revision: 3,
+      withdrawnAt: 3,
+    });
+  });
+
+  it("rejects invalid contract review, backup, and shared case replay inputs", async () => {
     const host = new FakeHostAdapter();
     const client = new BsaigcClient(host);
 
@@ -3884,10 +4531,21 @@ describe("BsaigcClient", () => {
       message: "limit must be a positive integer",
       retryable: false,
     });
+    await expect(client.replaySharedCaseEvents(-1, 10)).rejects.toMatchObject({
+      code: "HOST_ERROR",
+      message: "afterSequence must be a non-negative integer",
+      retryable: false,
+    });
+    await expect(client.replaySharedCaseEvents(0, 0)).rejects.toMatchObject({
+      code: "HOST_ERROR",
+      message: "limit must be a positive integer",
+      retryable: false,
+    });
     expect(host.contractReviewListRequests).toEqual([]);
     expect(host.assetBackupListLimits).toEqual([]);
     expect(host.contractReviewReplayCalls).toEqual([]);
     expect(host.backupReplayCalls).toEqual([]);
+    expect(host.sharedCaseReplayRequests).toEqual([]);
 
     host.getContractReview = () =>
       Promise.reject({
@@ -3901,6 +4559,18 @@ describe("BsaigcClient", () => {
       retryable: true,
     });
     expect(client.getSnapshot().error?.code).toBe("REVIEW_BUSY");
+  });
+
+  it("reports unavailable shared case replay capability", async () => {
+    const host = new FakeHostAdapter();
+    Object.defineProperty(host, "replaySharedCaseEvents", { value: undefined });
+    const client = new BsaigcClient(host);
+
+    await expect(client.replaySharedCaseEvents(0, 10)).rejects.toMatchObject({
+      code: "SHARED_CASE_UNAVAILABLE",
+      retryable: false,
+    });
+    expect(host.sharedCaseReplayRequests).toEqual([]);
   });
 
   it("resets business workspace projection and pending lifecycle state on stop", async () => {

@@ -1,0 +1,42 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+.app-auth-loading {
+  min-height: 100vh;
+  background: #f4f5f7;
+}
+
+
+.business-v1-blocking-error {
+  display: grid;
+  place-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: #f4f5f7;
+  color: #20242a;
+  text-align: center;
+}
+
+.business-v1-blocking-error p {
+  max-width: 560px;
+  color: #616975;
+}
+
+.business-v1-blocking-error button {
+  justify-self: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #aeb6c2;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}

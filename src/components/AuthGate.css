@@ -1,4 +1,4 @@
-/* Full-screen login gate, following the shell's warm-green design language. */
+/* Full-screen login gate using the Huabang Huyu orange brand language. */
 .auth-gate,
 .auth-gate * {
   box-sizing: border-box;
@@ -12,8 +12,8 @@
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(1100px 520px at 18% -8%, rgba(15, 118, 110, 0.10), transparent 60%),
-    radial-gradient(900px 460px at 108% 112%, rgba(15, 118, 110, 0.08), transparent 55%),
+    radial-gradient(1100px 520px at 18% -8%, rgba(255, 122, 24, 0.12), transparent 60%),
+    radial-gradient(900px 460px at 108% 112%, rgba(255, 178, 28, 0.10), transparent 55%),
     #f7f8f6;
   font-family: "IBM Plex Sans", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: #21332e;
@@ -36,24 +36,26 @@
   text-align: center;
 }
 .auth-gate__logo {
-  width: 46px;
-  height: 46px;
+  width: 118px;
+  height: 68px;
   display: grid;
   place-items: center;
-  border-radius: 13px;
-  color: #fff;
-  background: #0f766e;
-  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.28);
+}
+.auth-gate__logo img {
+  display: block;
+  width: 112px;
+  height: 65px;
+  object-fit: contain;
 }
 .auth-gate__brand strong {
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 .auth-gate__brand small {
   max-width: 300px;
   color: #6c7a75;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 1.6;
 }
 .auth-gate__field {
@@ -62,7 +64,7 @@
 }
 .auth-gate__field span {
   color: #3c4d47;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 620;
 }
 .auth-gate__field input {
@@ -74,7 +76,7 @@
   color: #21332e;
   background: #fbfcfb;
   font: inherit;
-  font-size: 13.5px;
+  font-size: 15px;
   outline: none;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
@@ -103,14 +105,14 @@
 }
 .auth-gate__password > button:hover:not(:disabled) {
   color: #21332e;
-  background: rgba(15, 118, 110, 0.08);
+  background: rgba(249, 115, 22, 0.10);
 }
 .auth-gate__password > button:disabled {
   cursor: not-allowed;
 }
 .auth-gate__field input:focus {
-  border-color: #0f766e;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+  border-color: #f97316;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.16);
   background: #fff;
 }
 .auth-gate__remember {
@@ -120,7 +122,7 @@
   justify-self: start;
   gap: 8px;
   color: #3c4d47;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   user-select: none;
 }
@@ -128,7 +130,7 @@
   width: 15px;
   height: 15px;
   margin: 0;
-  accent-color: #0f766e;
+  accent-color: #f97316;
   cursor: pointer;
 }
 .auth-gate__remember input:disabled {
@@ -139,7 +141,7 @@
   border-radius: 8px;
   color: #b44b52;
   background: rgba(180, 75, 82, 0.09);
-  font-size: 12px;
+  font-size: 13px;
 }
 .auth-gate__submit {
   min-height: 40px;
@@ -151,16 +153,16 @@
   border: 0;
   border-radius: 10px;
   color: #fff;
-  background: #0f766e;
-  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.22);
+  background: linear-gradient(135deg, #ff7a18 0%, #ffb21c 100%);
+  box-shadow: 0 10px 24px rgba(249, 115, 22, 0.24);
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 660;
   cursor: pointer;
   transition: background 140ms ease;
 }
 .auth-gate__submit:hover:not(:disabled) {
-  background: #0c5f59;
+  background: linear-gradient(135deg, #f2640b 0%, #f59e0b 100%);
 }
 .auth-gate__submit:disabled {
   opacity: 0.6;
@@ -169,7 +171,7 @@
 .auth-gate__sync {
   margin-top: 2px;
   color: #6c7a75;
-  font-size: 10.5px;
+  font-size: 12px;
   text-align: center;
 }
 .auth-gate__spin {

@@ -25,6 +25,7 @@ import type { AssetRecord } from "../generated/bsaigc/AssetRecord";
 import type { AssetSourceSelection } from "../generated/bsaigc/AssetSourceSelection";
 import type { BrainAttachmentPreview } from "../generated/bsaigc/BrainAttachmentPreview";
 import type { BrainDroppedItems } from "../generated/bsaigc/BrainDroppedItems";
+import type { BrainProjectWorkspaceBinding } from "../generated/bsaigc/BrainProjectWorkspaceBinding";
 import type { BrainTurnContext } from "../generated/bsaigc/BrainTurnContext";
 import type { BrainWorkspaceSelection } from "../generated/bsaigc/BrainWorkspaceSelection";
 import type { StageClipboardImageRequest } from "../generated/bsaigc/StageClipboardImageRequest";
@@ -48,6 +49,11 @@ import type { CaseCommandEnvelope } from "../generated/bsaigc/CaseCommandEnvelop
 import type { CaseCommandResponse } from "../generated/bsaigc/CaseCommandResponse";
 import type { CaseDomainEvent } from "../generated/bsaigc/CaseDomainEvent";
 import type { CaseRecord } from "../generated/bsaigc/CaseRecord";
+import type { ReplayEventsRequest } from "../generated/bsaigc/ReplayEventsRequest";
+import type { SharedCaseCommandEnvelope } from "../generated/bsaigc/SharedCaseCommandEnvelope";
+import type { SharedCaseCommandResponse } from "../generated/bsaigc/SharedCaseCommandResponse";
+import type { SharedCaseDomainEvent } from "../generated/bsaigc/SharedCaseDomainEvent";
+import type { SharedCasePublicationRecord } from "../generated/bsaigc/SharedCasePublicationRecord";
 import type { CreateCasePayload } from "../generated/bsaigc/CreateCasePayload";
 import type { UpdateCasePayload } from "../generated/bsaigc/UpdateCasePayload";
 import type { CreateExecutionBriefPayload } from "../generated/bsaigc/CreateExecutionBriefPayload";
@@ -86,16 +92,24 @@ import type { UpsertBusinessMilestonePayload } from "../generated/bsaigc/UpsertB
 import type { ChangeBusinessDocumentStatusPayload } from "../generated/bsaigc/ChangeBusinessDocumentStatusPayload";
 import type { ChangeBusinessWorkspaceStatusPayload } from "../generated/bsaigc/ChangeBusinessWorkspaceStatusPayload";
 import type { ConfirmBusinessQuotePayload } from "../generated/bsaigc/ConfirmBusinessQuotePayload";
+import type { CreateBusinessAcceptanceBatchPayload } from "../generated/bsaigc/CreateBusinessAcceptanceBatchPayload";
+import type { ApproveBusinessTemplateVersionPayload } from "../generated/bsaigc/ApproveBusinessTemplateVersionPayload";
+import type { NormalizeBusinessLegacyTemplatePayload } from "../generated/bsaigc/NormalizeBusinessLegacyTemplatePayload";
+import type { RejectBusinessTemplateVersionPayload } from "../generated/bsaigc/RejectBusinessTemplateVersionPayload";
 import type { RecordBusinessReceiptPayload } from "../generated/bsaigc/RecordBusinessReceiptPayload";
 import type { ReverseBusinessReceiptPayload } from "../generated/bsaigc/ReverseBusinessReceiptPayload";
 import type { AdoptLatestConfirmedRequirementPayload } from "../generated/bsaigc/AdoptLatestConfirmedRequirementPayload";
 import type { CreateBusinessDocumentPayload } from "../generated/bsaigc/CreateBusinessDocumentPayload";
 import type { GenerateBusinessDocumentPayload } from "../generated/bsaigc/GenerateBusinessDocumentPayload";
 import type { PromoteReviewedContractPayload } from "../generated/bsaigc/PromoteReviewedContractPayload";
+import type { PrepareBusinessAcceptanceDocumentsPayload } from "../generated/bsaigc/PrepareBusinessAcceptanceDocumentsPayload";
 import type { ListBusinessWorkspacePrefillCandidatesRequest } from "../generated/bsaigc/ListBusinessWorkspacePrefillCandidatesRequest";
 import type { PreviewBusinessWorkspacePrefillRequest } from "../generated/bsaigc/PreviewBusinessWorkspacePrefillRequest";
 import type { UpdateBusinessProfilePayload } from "../generated/bsaigc/UpdateBusinessProfilePayload";
+import type { UpsertBusinessAcceptanceMaterialPayload } from "../generated/bsaigc/UpsertBusinessAcceptanceMaterialPayload";
 import type { UpsertBusinessPaymentPayload } from "../generated/bsaigc/UpsertBusinessPaymentPayload";
+import type { UpsertBusinessSettlementBatchPayload } from "../generated/bsaigc/UpsertBusinessSettlementBatchPayload";
+import type { VoidBusinessSettlementBatchPayload } from "../generated/bsaigc/VoidBusinessSettlementBatchPayload";
 import type { AssetBackupRecord } from "../generated/bsaigc/AssetBackupRecord";
 import type { BackupCommandEnvelope } from "../generated/bsaigc/BackupCommandEnvelope";
 import type { BackupCommandResponse } from "../generated/bsaigc/BackupCommandResponse";
@@ -181,6 +195,21 @@ export interface CommandOptions {
 export interface ScopedCommandOptions extends CommandOptions {
   readonly projectId?: string | null;
 }
+
+export type PublishSharedCaseInput = Extract<
+  SharedCaseCommandEnvelope,
+  { commandType: "sharedCase.publish" }
+>["payload"];
+
+export type UpdateSharedCaseGrantsInput = Extract<
+  SharedCaseCommandEnvelope,
+  { commandType: "sharedCase.updateGrants" }
+>["payload"];
+
+export type WithdrawSharedCaseInput = Extract<
+  SharedCaseCommandEnvelope,
+  { commandType: "sharedCase.withdraw" }
+>["payload"];
 
 export interface UpdateProjectBriefInput extends UpdateProjectBriefPayload {
   readonly expectedRevision: number;
@@ -580,6 +609,41 @@ export class BsaigcClient {
       ));
     }
     return this.callHost(() => this.host.selectBrainWorkspace!());
+  }
+
+  bindBrainProjectWorkspace(
+    projectId: string,
+    workspaceToken: string,
+    expectedRevision: number | null,
+  ): Promise<BrainProjectWorkspaceBinding> {
+    if (!this.host.bindBrainProjectWorkspace) {
+      return Promise.reject(hostError(
+        "BRAIN_WORKSPACE_UNAVAILABLE",
+        "当前运行环境不支持绑定项目工作区。",
+        false,
+      ));
+    }
+    return this.callHost(() => this.host.bindBrainProjectWorkspace!(
+      projectId,
+      workspaceToken,
+      expectedRevision,
+    ));
+  }
+
+  listBrainProjectWorkspaces(): Promise<BrainProjectWorkspaceBinding[]> {
+    if (!this.host.listBrainProjectWorkspaces) return Promise.resolve([]);
+    return this.callHost(() => this.host.listBrainProjectWorkspaces!());
+  }
+
+  unbindBrainProjectWorkspace(projectId: string, expectedRevision: number): Promise<void> {
+    if (!this.host.unbindBrainProjectWorkspace) {
+      return Promise.reject(hostError(
+        "BRAIN_WORKSPACE_UNAVAILABLE",
+        "当前运行环境不支持解除项目工作区绑定。",
+        false,
+      ));
+    }
+    return this.callHost(() => this.host.unbindBrainProjectWorkspace!(projectId, expectedRevision));
   }
 
   registerBrainDroppedPaths(paths: string[]): Promise<BrainDroppedItems> {
@@ -1048,6 +1112,40 @@ export class BsaigcClient {
     return this.executeBusinessWorkspace(command);
   }
 
+  upsertBusinessSettlementBatch(
+    payload: UpsertBusinessSettlementBatchPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.upsertSettlementBatch",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
+  voidBusinessSettlementBatch(
+    payload: VoidBusinessSettlementBatchPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.voidSettlementBatch",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
   confirmBusinessQuote(
     payload: ConfirmBusinessQuotePayload,
     expectedRevision: number,
@@ -1161,6 +1259,57 @@ export class BsaigcClient {
         options,
       ),
       commandType: "businessWorkspace.upsertMilestone",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
+  createBusinessAcceptanceBatch(
+    payload: CreateBusinessAcceptanceBatchPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.createAcceptanceBatch",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
+  prepareBusinessAcceptanceDocuments(
+    payload: PrepareBusinessAcceptanceDocumentsPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.prepareAcceptanceDocuments",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
+  upsertBusinessAcceptanceMaterial(
+    payload: UpsertBusinessAcceptanceMaterialPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.upsertAcceptanceMaterial",
       payload,
       expectedRevision: requirePositiveRevision(expectedRevision),
     };
@@ -1286,6 +1435,57 @@ export class BsaigcClient {
     return this.executeBusinessWorkspace(command);
   }
 
+  normalizeBusinessLegacyTemplate(
+    payload: NormalizeBusinessLegacyTemplatePayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.normalizeLegacyTemplate",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
+  approveBusinessTemplateVersion(
+    payload: ApproveBusinessTemplateVersionPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.approveTemplateVersion",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
+  rejectBusinessTemplateVersion(
+    payload: RejectBusinessTemplateVersionPayload,
+    expectedRevision: number,
+    options: CommandOptions = {},
+  ): Promise<BusinessWorkspaceCommandResponse> {
+    const command: BusinessWorkspaceCommandEnvelope = {
+      ...this.commandBase(
+        this.businessWorkspaceProjectId(payload.workspaceId),
+        options,
+      ),
+      commandType: "businessWorkspace.rejectTemplateVersion",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeBusinessWorkspace(command);
+  }
+
   changeBusinessWorkspaceStatus(
     payload: ChangeBusinessWorkspaceStatusPayload,
     expectedRevision: number,
@@ -1361,7 +1561,12 @@ export class BsaigcClient {
     threadId: string,
     archived: boolean,
   ): Promise<BrainThreadRecord> {
-    return this.host.brainThreadArchive(threadId, archived);
+    return this.callHost(async () => {
+      const thread = await this.host.brainThreadArchive(threadId, archived);
+      this.brainProjection.upsertThreads([thread]);
+      this.publish();
+      return thread;
+    });
   }
 
   brainThreadRename(threadId: string, title: string): Promise<BrainThreadRecord> {
@@ -1382,6 +1587,10 @@ export class BsaigcClient {
 
   authLogin(credentials: AuthCredentials): Promise<AuthStatus> {
     return this.host.authLogin(credentials);
+  }
+
+  authLoginRemembered(): Promise<AuthStatus> {
+    return this.host.authLoginRemembered();
   }
 
   authLogout(): Promise<AuthStatus> {
@@ -1859,6 +2068,98 @@ export class BsaigcClient {
 
   listAssetBackups(limit = REPLAY_PAGE_SIZE): Promise<readonly AssetBackupRecord[]> {
     return this.callHost(() => this.host.listAssetBackups(requirePositiveLimit(limit)));
+  }
+
+  executeSharedCaseCommand(
+    command: SharedCaseCommandEnvelope,
+  ): Promise<SharedCaseCommandResponse> {
+    if (!this.host.executeSharedCaseCommand) {
+      return Promise.reject(
+        hostError(
+          "SHARED_CASE_UNAVAILABLE",
+          "当前运行环境不支持共享案例命令。",
+          false,
+        ),
+      );
+    }
+    return this.callHost(() => this.host.executeSharedCaseCommand!(command));
+  }
+
+  publishSharedCase(
+    payload: PublishSharedCaseInput,
+    expectedRevision: number | null = null,
+    options: ScopedCommandOptions = {},
+  ): Promise<SharedCaseCommandResponse> {
+    const command: SharedCaseCommandEnvelope = {
+      ...this.commandBase(options.projectId ?? null, options),
+      commandType: "sharedCase.publish",
+      payload,
+      expectedRevision: optionalPositiveRevision(expectedRevision),
+    };
+    return this.executeSharedCaseCommand(command);
+  }
+
+  updateSharedCaseGrants(
+    payload: UpdateSharedCaseGrantsInput,
+    expectedRevision: number,
+    options: ScopedCommandOptions = {},
+  ): Promise<SharedCaseCommandResponse> {
+    const command: SharedCaseCommandEnvelope = {
+      ...this.commandBase(options.projectId ?? null, options),
+      commandType: "sharedCase.updateGrants",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeSharedCaseCommand(command);
+  }
+
+  withdrawSharedCase(
+    payload: WithdrawSharedCaseInput,
+    expectedRevision: number,
+    options: ScopedCommandOptions = {},
+  ): Promise<SharedCaseCommandResponse> {
+    const command: SharedCaseCommandEnvelope = {
+      ...this.commandBase(options.projectId ?? null, options),
+      commandType: "sharedCase.withdraw",
+      payload,
+      expectedRevision: requirePositiveRevision(expectedRevision),
+    };
+    return this.executeSharedCaseCommand(command);
+  }
+
+  listAuthorizedSharedCases(): Promise<readonly SharedCasePublicationRecord[]> {
+    if (!this.host.listAuthorizedSharedCases) {
+      return Promise.reject(
+        hostError(
+          "SHARED_CASE_UNAVAILABLE",
+          "当前运行环境不支持读取共享案例。",
+          false,
+        ),
+      );
+    }
+    return this.callHost(() => this.host.listAuthorizedSharedCases!());
+  }
+
+  replaySharedCaseEvents(
+    afterSequence: number,
+    limit: number,
+  ): Promise<readonly SharedCaseDomainEvent[]> {
+    if (!this.host.replaySharedCaseEvents) {
+      return Promise.reject(
+        hostError(
+          "SHARED_CASE_UNAVAILABLE",
+          "当前运行环境不支持共享案例事件回放。",
+          false,
+        ),
+      );
+    }
+    return this.callHost(() => {
+      const request: ReplayEventsRequest = {
+        afterSequence: requireNonNegativeSequence(afterSequence),
+        limit: requirePositiveLimit(limit),
+      };
+      return this.host.replaySharedCaseEvents!(request);
+    });
   }
 
   replayBackupEvents(

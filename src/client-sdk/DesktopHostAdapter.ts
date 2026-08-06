@@ -22,6 +22,7 @@ import type { AssetRecord } from "../generated/bsaigc/AssetRecord";
 import type { AssetSourceSelection } from "../generated/bsaigc/AssetSourceSelection";
 import type { BrainAttachmentPreview } from "../generated/bsaigc/BrainAttachmentPreview";
 import type { BrainDroppedItems } from "../generated/bsaigc/BrainDroppedItems";
+import type { BrainProjectWorkspaceBinding } from "../generated/bsaigc/BrainProjectWorkspaceBinding";
 import type { BrainTurnContext } from "../generated/bsaigc/BrainTurnContext";
 import type { BrainWorkspaceSelection } from "../generated/bsaigc/BrainWorkspaceSelection";
 import type { StageClipboardImageRequest } from "../generated/bsaigc/StageClipboardImageRequest";
@@ -45,6 +46,11 @@ import type { CaseCommandEnvelope } from "../generated/bsaigc/CaseCommandEnvelop
 import type { CaseCommandResponse } from "../generated/bsaigc/CaseCommandResponse";
 import type { CaseDomainEvent } from "../generated/bsaigc/CaseDomainEvent";
 import type { CaseRecord } from "../generated/bsaigc/CaseRecord";
+import type { ReplayEventsRequest } from "../generated/bsaigc/ReplayEventsRequest";
+import type { SharedCaseCommandEnvelope } from "../generated/bsaigc/SharedCaseCommandEnvelope";
+import type { SharedCaseCommandResponse } from "../generated/bsaigc/SharedCaseCommandResponse";
+import type { SharedCaseDomainEvent } from "../generated/bsaigc/SharedCaseDomainEvent";
+import type { SharedCasePublicationRecord } from "../generated/bsaigc/SharedCasePublicationRecord";
 import type { ExecutionBriefCommandEnvelope } from "../generated/bsaigc/ExecutionBriefCommandEnvelope";
 import type { ExecutionBriefCommandResponse } from "../generated/bsaigc/ExecutionBriefCommandResponse";
 import type { ExecutionBriefDomainEvent } from "../generated/bsaigc/ExecutionBriefDomainEvent";
@@ -148,6 +154,26 @@ export class DesktopHostAdapter implements HostAdapter {
 
   selectBrainWorkspace(): Promise<BrainWorkspaceSelection | null> {
     return invoke<BrainWorkspaceSelection | null>("select_brain_workspace");
+  }
+
+  bindBrainProjectWorkspace(
+    projectId: string,
+    workspaceToken: string,
+    expectedRevision: number | null,
+  ): Promise<BrainProjectWorkspaceBinding> {
+    return invoke<BrainProjectWorkspaceBinding>("bind_brain_project_workspace", {
+      projectId,
+      workspaceToken,
+      expectedRevision,
+    });
+  }
+
+  listBrainProjectWorkspaces(): Promise<BrainProjectWorkspaceBinding[]> {
+    return invoke<BrainProjectWorkspaceBinding[]>("list_brain_project_workspaces");
+  }
+
+  unbindBrainProjectWorkspace(projectId: string, expectedRevision: number): Promise<void> {
+    return invoke<void>("unbind_brain_project_workspace", { projectId, expectedRevision });
   }
 
   registerBrainDroppedPaths(paths: string[]): Promise<BrainDroppedItems> {
@@ -308,6 +334,26 @@ export class DesktopHostAdapter implements HostAdapter {
     return invoke<BusinessWorkspaceRecord[]>("list_business_workspaces");
   }
 
+  executeSharedCaseCommand(
+    command: SharedCaseCommandEnvelope,
+  ): Promise<SharedCaseCommandResponse> {
+    return invoke<SharedCaseCommandResponse>("execute_shared_case_command", {
+      command,
+    });
+  }
+
+  listAuthorizedSharedCases(): Promise<SharedCasePublicationRecord[]> {
+    return invoke<SharedCasePublicationRecord[]>("list_authorized_shared_cases");
+  }
+
+  replaySharedCaseEvents(
+    request: ReplayEventsRequest,
+  ): Promise<SharedCaseDomainEvent[]> {
+    return invoke<SharedCaseDomainEvent[]>("replay_shared_case_events", {
+      request,
+    });
+  }
+
   listBusinessCustomers(
     request: ListBusinessCustomersRequest,
   ): Promise<BusinessCustomerReceivableSummary[]> {
@@ -338,6 +384,10 @@ export class DesktopHostAdapter implements HostAdapter {
 
   authLogin(credentials: AuthCredentials): Promise<AuthStatus> {
     return invoke<AuthStatus>("auth_login", { credentials });
+  }
+
+  authLoginRemembered(): Promise<AuthStatus> {
+    return invoke<AuthStatus>("auth_login_remembered");
   }
 
   authLogout(): Promise<AuthStatus> {

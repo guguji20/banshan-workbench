@@ -1,32 +1,61 @@
 use crate::asset_service;
 use crate::business_closure_service;
+use crate::business_v1::legacy_doc_normalizer;
+use crate::business_v1::production_result_confirmation_template::{
+    ProductionResultConfirmationDeliveryItem, ProductionResultConfirmationImage,
+    ProductionResultConfirmationShot, ProductionResultConfirmationStoryboard,
+    ProductionResultConfirmationTemplateData,
+};
+use crate::business_v1::video_completion_acceptance_template::{
+    VideoAssetReference, VideoBlock, VideoCompletionAcceptanceTemplateData, VideoDeliveryGroup,
+    VideoScreenshot,
+};
+use crate::business_v1::{
+    TemplateArtifact, TemplateConverter, TemplateVersion, TemplateVersionStatus,
+};
 use crate::contract_review_service;
 use crate::document_engine;
 use crate::protocol::{
-    AdoptLatestConfirmedRequirementPayload, AssetDomainEvent, AssignBusinessCustomerPayload,
-    AttachBusinessInvoiceAssetPayload, BusinessArchiveIntegrityStatus, BusinessCurrentDocuments,
+    AdoptLatestConfirmedRequirementPayload, ApproveBusinessTemplateVersionPayload,
+    AssetDomainEvent, AssignBusinessCustomerPayload, AttachBusinessInvoiceAssetPayload,
+    BusinessAcceptanceBatchRecord, BusinessAcceptanceBatchStatus, BusinessAcceptanceBlocker,
+    BusinessAcceptanceMaterialBinding, BusinessAcceptanceMaterialKind,
+    BusinessAcceptanceMaterialRecord, BusinessAcceptanceOutputSpecRecord,
+    BusinessAcceptanceReadiness, BusinessAcceptanceRequirementRecord,
+    BusinessArchiveIntegrityStatus, BusinessContractSettlementData, BusinessCurrentDocuments,
     BusinessCustomerReceivableSummary, BusinessDocumentFormat, BusinessDocumentKind,
     BusinessDocumentRecord, BusinessDocumentSnapshot, BusinessDocumentStatus,
     BusinessEvidenceInput, BusinessEvidenceKind, BusinessEvidenceRecord, BusinessFinancialSummary,
     BusinessInvoiceKind, BusinessLifecycleStage, BusinessLineItem, BusinessLineItemInput,
-    BusinessManualWaiverInput, BusinessManualWaiverRecord, BusinessPaymentInput,
-    BusinessPaymentRecord, BusinessPaymentStatus, BusinessProfile, BusinessProfileInput,
+    BusinessManualWaiverInput, BusinessManualWaiverRecord, BusinessPaymentApplicationData,
+    BusinessPaymentApplicationInput, BusinessPaymentInput, BusinessPaymentRecord,
+    BusinessPaymentSettlementItemData, BusinessPaymentStatus,
+    BusinessProductionResultConfirmationAssetReference, BusinessProductionResultConfirmationData,
+    BusinessProfile, BusinessProfileInput, BusinessQuotationTotals,
     BusinessQuoteConfirmationRecord, BusinessReceiptKind, BusinessReceiptRecord,
-    BusinessWorkspaceCommandEnvelope, BusinessWorkspaceCommandResponse,
-    BusinessWorkspaceDomainEvent, BusinessWorkspaceEventType, BusinessWorkspacePrefillCandidate,
-    BusinessWorkspacePrefillChange, BusinessWorkspacePrefillDecision,
-    BusinessWorkspacePrefillField, BusinessWorkspacePrefillMatchKind,
-    BusinessWorkspacePrefillPreview, BusinessWorkspaceRecord, BusinessWorkspaceStatus,
-    ChangeBusinessDocumentStatusPayload, ChangeBusinessWorkspaceStatusPayload, CommandReceipt,
-    ConfirmBusinessQuotePayload, CreateBusinessArchiveSnapshotPayload,
+    BusinessServiceSettlementItemData, BusinessSettlementBatchRecord,
+    BusinessSettlementBatchStatus, BusinessSettlementLineInput, BusinessSettlementLineRecord,
+    BusinessTaxMode, BusinessTemplateVersionRecord, BusinessTemplateVersionStatus,
+    BusinessVideoCompletionAcceptanceData, BusinessWorkspaceCommandEnvelope,
+    BusinessWorkspaceCommandResponse, BusinessWorkspaceDomainEvent, BusinessWorkspaceEventType,
+    BusinessWorkspacePrefillCandidate, BusinessWorkspacePrefillChange,
+    BusinessWorkspacePrefillDecision, BusinessWorkspacePrefillField,
+    BusinessWorkspacePrefillMatchKind, BusinessWorkspacePrefillPreview, BusinessWorkspaceRecord,
+    BusinessWorkspaceStatus, ChangeBusinessDocumentStatusPayload,
+    ChangeBusinessWorkspaceStatusPayload, CommandReceipt, ConfirmBusinessQuotePayload,
+    CreateBusinessAcceptanceBatchPayload, CreateBusinessArchiveSnapshotPayload,
     CreateBusinessDocumentPayload, CreateBusinessWorkspacePayload, GenerateBusinessDocumentPayload,
     HostError, ListBusinessCustomersRequest, ListBusinessWorkspacePrefillCandidatesRequest,
-    OperationContext, PreviewBusinessWorkspacePrefillRequest, PromoteReviewedContractPayload,
-    RecordBusinessDeliverySentPayload, RecordBusinessDeliverySignoffPayload,
-    RecordBusinessInvoiceIssuedPayload, RecordBusinessInvoiceRedCorrectionPayload,
-    RecordBusinessReceiptPayload, RegisterBusinessDeliverableVersionPayload,
+    NormalizeBusinessLegacyTemplatePayload, OperationContext,
+    PrepareBusinessAcceptanceDocumentsPayload, PreviewBusinessWorkspacePrefillRequest,
+    PromoteReviewedContractPayload, RecordBusinessDeliverySentPayload,
+    RecordBusinessDeliverySignoffPayload, RecordBusinessInvoiceIssuedPayload,
+    RecordBusinessInvoiceRedCorrectionPayload, RecordBusinessReceiptPayload,
+    RegisterBusinessDeliverableVersionPayload, RejectBusinessTemplateVersionPayload,
     RequirementBriefContent, ReverseBusinessReceiptPayload, UpdateBusinessProfilePayload,
-    UpsertBusinessCustomerPayload, UpsertBusinessMilestonePayload, UpsertBusinessPaymentPayload,
+    UpsertBusinessAcceptanceMaterialPayload, UpsertBusinessCustomerPayload,
+    UpsertBusinessMilestonePayload, UpsertBusinessPaymentPayload,
+    UpsertBusinessSettlementBatchPayload, VoidBusinessSettlementBatchPayload,
     BUSINESS_WORKSPACE_LEGACY_PROTOCOL_VERSION, BUSINESS_WORKSPACE_PREVIOUS_PROTOCOL_VERSION,
     BUSINESS_WORKSPACE_PROTOCOL_VERSION,
 };
@@ -43,8 +72,22 @@ const MAX_SHORT_CHARS: usize = 240;
 const MAX_TEXT_CHARS: usize = 16_000;
 const MAX_LINE_ITEMS: usize = 200;
 const MAX_PAYMENTS_PER_WORKSPACE: i64 = 500;
+const MAX_SETTLEMENT_BATCHES_PER_WORKSPACE: usize = 500;
+const MAX_SETTLEMENT_LINES_PER_BATCH: usize = 500;
 const MAX_DOCUMENTS_PER_WORKSPACE: i64 = 1_000;
 const MAX_RECEIPTS_PER_WORKSPACE: i64 = 5_000;
+const MAX_ACCEPTANCE_BATCHES_PER_WORKSPACE: i64 = 500;
+const MAX_ACCEPTANCE_MATERIALS_PER_BATCH: i64 = 5_000;
+const MAX_ACCEPTANCE_REQUIREMENTS_PER_BATCH: usize = 100;
+const MAX_ACCEPTANCE_OUTPUT_SPECS_PER_BATCH: usize = 100;
+const MAX_VIDEO_ACCEPTANCE_GROUPS: usize = 32;
+const MAX_VIDEO_ACCEPTANCE_VIDEOS: usize = 128;
+const MAX_VIDEO_ACCEPTANCE_SCREENSHOTS_PER_VIDEO: usize = 8;
+const MAX_VIDEO_ACCEPTANCE_SCREENSHOT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_PRODUCTION_RESULT_CONFIRMATION_DELIVERY_ITEMS: usize = 32;
+const MAX_PRODUCTION_RESULT_CONFIRMATION_IMAGES: usize = 256;
+const MAX_PRODUCTION_RESULT_CONFIRMATION_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_TEMPLATE_VERSIONS_PER_WORKSPACE: i64 = 500;
 const DEFAULT_CUSTOMER_LIST_LIMIT: u32 = 100;
 const MAX_CUSTOMER_LIST_LIMIT: u32 = 500;
 const MAX_MONEY_CENTS: i64 = 9_000_000_000_000_000;
@@ -52,6 +95,14 @@ const MAX_QUANTITY_MILLIS: i64 = 1_000_000_000_000;
 const MAX_REPLAY_LIMIT: u32 = 1_000;
 const DEFAULT_PREFILL_CANDIDATE_LIMIT: u32 = 50;
 const MAX_PREFILL_CANDIDATE_LIMIT: u32 = 100;
+const SENSITIVE_BUSINESS_JOURNAL_FIELDS: [&str; 6] = [
+    "supplierBankName",
+    "supplierBankAccount",
+    "supplier_bank_name",
+    "supplier_bank_account",
+    "supplierBankRoutingNumber",
+    "supplier_bank_routing_number",
+];
 const REUSABLE_PREFILL_FIELDS: [BusinessWorkspacePrefillField; 15] = [
     BusinessWorkspacePrefillField::CustomerLegalName,
     BusinessWorkspacePrefillField::CustomerTaxId,
@@ -90,6 +141,7 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                 customer_name_key TEXT NOT NULL DEFAULT '',
                 customer_legal_name_key TEXT NOT NULL DEFAULT '',
                 profile_json TEXT NOT NULL,
+                settlement_batches_json TEXT NOT NULL DEFAULT '[]',
                 status TEXT NOT NULL CHECK(status IN ('active','archived')),
                 archived_at INTEGER,
                 archived_by TEXT,
@@ -119,6 +171,8 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                 report_asset_id TEXT,
                 evidence_json TEXT,
                 manual_waiver_json TEXT,
+                acceptance_batch_id TEXT,
+                acceptance_output_spec_id TEXT,
                 voided_at INTEGER,
                 voided_by TEXT,
                 void_reason TEXT NOT NULL DEFAULT '',
@@ -174,6 +228,7 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                     OR status NOT IN ('generated','effective')
                 ),
                 FOREIGN KEY(workspace_id) REFERENCES business_workspaces(id) ON DELETE RESTRICT,
+                FOREIGN KEY(acceptance_batch_id) REFERENCES business_acceptance_batches(id) ON DELETE RESTRICT,
                 FOREIGN KEY(output_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
                 FOREIGN KEY(source_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
                 FOREIGN KEY(report_asset_id) REFERENCES assets(id) ON DELETE RESTRICT
@@ -182,6 +237,82 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                 ON business_documents(workspace_id, created_at ASC, id ASC);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_business_documents_output_asset
                 ON business_documents(output_asset_id) WHERE output_asset_id IS NOT NULL;
+            CREATE TABLE IF NOT EXISTS business_acceptance_batches (
+                id TEXT PRIMARY KEY NOT NULL,
+                workspace_id TEXT NOT NULL,
+                label TEXT NOT NULL,
+                requirements_json TEXT NOT NULL,
+                output_specs_json TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES business_workspaces(id) ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS idx_business_acceptance_batches_workspace
+                ON business_acceptance_batches(workspace_id, created_at ASC, id ASC);
+
+            CREATE TABLE IF NOT EXISTS business_template_versions (
+                id TEXT PRIMARY KEY NOT NULL,
+                workspace_id TEXT NOT NULL,
+                source_asset_id TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
+                normalized_asset_id TEXT NOT NULL UNIQUE,
+                normalized_sha256 TEXT NOT NULL CHECK(length(normalized_sha256) = 64),
+                template_key TEXT NOT NULL,
+                mapping_version TEXT NOT NULL,
+                converter_engine TEXT NOT NULL,
+                converter_version TEXT NOT NULL,
+                converter_policy_version TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pendingReview','approved','rejected')),
+                reviewed_by TEXT,
+                reviewed_at INTEGER,
+                review_note TEXT NOT NULL DEFAULT '',
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(workspace_id, source_asset_id, source_sha256, template_key,
+                       mapping_version, converter_policy_version),
+                CHECK(
+                    (status = 'pendingReview' AND reviewed_by IS NULL
+                     AND reviewed_at IS NULL AND review_note = '')
+                    OR
+                    (status IN ('approved','rejected') AND reviewed_by IS NOT NULL
+                     AND reviewed_at IS NOT NULL AND length(review_note) > 0)
+                ),
+                FOREIGN KEY(workspace_id) REFERENCES business_workspaces(id) ON DELETE RESTRICT,
+                FOREIGN KEY(source_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(normalized_asset_id) REFERENCES assets(id) ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS idx_business_template_versions_workspace
+                ON business_template_versions(workspace_id, created_at ASC, id ASC);
+            CREATE INDEX IF NOT EXISTS idx_business_template_versions_approved_binding
+                ON business_template_versions(normalized_asset_id, normalized_sha256,
+                                              template_key, mapping_version)
+                WHERE status = 'approved';
+
+            CREATE TABLE IF NOT EXISTS business_acceptance_materials (
+                id TEXT PRIMARY KEY NOT NULL,
+                workspace_id TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                requirement_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN
+                    ('script','video','screenshot','behindTheScenes','publishingData','invoice','proof','other')),
+                group_key TEXT NOT NULL,
+                confirmed INTEGER NOT NULL CHECK(confirmed IN (0,1)),
+                duplicate_of_material_id TEXT,
+                notes TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(batch_id, asset_id),
+                FOREIGN KEY(workspace_id) REFERENCES business_workspaces(id) ON DELETE RESTRICT,
+                FOREIGN KEY(batch_id) REFERENCES business_acceptance_batches(id) ON DELETE RESTRICT,
+                FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(duplicate_of_material_id) REFERENCES business_acceptance_materials(id) ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS idx_business_acceptance_materials_batch
+                ON business_acceptance_materials(batch_id, created_at ASC, id ASC);
 
             CREATE TABLE IF NOT EXISTS business_payments (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -257,14 +388,20 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                     ('businessWorkspace.created','businessWorkspace.profileUpdated',
                      'businessWorkspace.documentCreated','businessWorkspace.documentStatusChanged',
                      'businessWorkspace.documentGenerated','businessWorkspace.reviewedContractPromoted',
-                     'businessWorkspace.paymentUpserted','businessWorkspace.quoteConfirmed',
+                     'businessWorkspace.paymentUpserted','businessWorkspace.settlementBatchUpserted',
+                     'businessWorkspace.settlementBatchVoided','businessWorkspace.quoteConfirmed',
                      'businessWorkspace.receiptRecorded','businessWorkspace.receiptReversed',
                      'businessWorkspace.requirementAdopted','businessWorkspace.customerUpserted',
                      'businessWorkspace.customerAssigned','businessWorkspace.milestoneUpserted',
                      'businessWorkspace.deliverableVersionRegistered','businessWorkspace.deliverySent',
                      'businessWorkspace.deliverySignoffRecorded','businessWorkspace.invoiceIssued',
                      'businessWorkspace.invoiceRedCorrected','businessWorkspace.invoiceAssetAttached',
+                     'businessWorkspace.acceptanceBatchCreated','businessWorkspace.acceptanceDocumentsPrepared',
+                     'businessWorkspace.acceptanceMaterialUpserted',
                      'businessWorkspace.archiveSnapshotPrepared',
+                     'businessWorkspace.templateVersionNormalized',
+                     'businessWorkspace.templateVersionApproved',
+                     'businessWorkspace.templateVersionRejected',
                      'businessWorkspace.statusChanged')),
                 aggregate_id TEXT NOT NULL,
                 revision INTEGER NOT NULL CHECK(revision >= 1),
@@ -286,14 +423,20 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
                     ('businessWorkspace.create','businessWorkspace.updateProfile',
                      'businessWorkspace.createDocument','businessWorkspace.changeDocumentStatus',
                      'businessWorkspace.generateDocument','businessWorkspace.promoteReviewedContract',
-                     'businessWorkspace.upsertPayment','businessWorkspace.confirmQuote',
+                     'businessWorkspace.upsertPayment','businessWorkspace.upsertSettlementBatch',
+                     'businessWorkspace.voidSettlementBatch','businessWorkspace.confirmQuote',
                      'businessWorkspace.recordReceipt','businessWorkspace.reverseReceipt',
                      'businessWorkspace.adoptLatestConfirmedRequirement','businessWorkspace.upsertCustomer',
                      'businessWorkspace.assignCustomer','businessWorkspace.upsertMilestone',
                      'businessWorkspace.registerDeliverableVersion','businessWorkspace.recordDeliverySent',
                      'businessWorkspace.recordDeliverySignoff','businessWorkspace.recordInvoiceIssued',
                      'businessWorkspace.recordInvoiceRedCorrection','businessWorkspace.attachInvoiceAsset',
+                     'businessWorkspace.createAcceptanceBatch','businessWorkspace.prepareAcceptanceDocuments',
+                     'businessWorkspace.upsertAcceptanceMaterial',
                      'businessWorkspace.createArchiveSnapshot',
+                     'businessWorkspace.normalizeLegacyTemplate',
+                     'businessWorkspace.approveTemplateVersion',
+                     'businessWorkspace.rejectTemplateVersion',
                      'businessWorkspace.changeStatus')),
                 protocol_version TEXT NOT NULL,
                 deadline_at INTEGER,
@@ -319,9 +462,11 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
         .map_err(sql_error)?;
     ensure_prefill_source_column(connection)?;
     ensure_prefill_identity_columns(connection)?;
+    ensure_settlement_batches_column(connection)?;
     migrate_reviewed_contract_binding(connection)?;
     ensure_workspace_lifecycle_columns(connection)?;
     ensure_document_lifecycle_columns(connection)?;
+    ensure_acceptance_document_schema(connection)?;
     migrate_payment_ledger_schema(connection)?;
     ensure_quote_confirmation_schema(connection)?;
     ensure_receipt_schema(connection)?;
@@ -329,7 +474,89 @@ pub fn migrate(connection: &Connection) -> Result<(), HostError> {
     business_closure_service::migrate(connection)?;
     ensure_event_audit_columns(connection)?;
     migrate_event_type_constraint(connection)?;
-    migrate_receipt_protocol_constraint(connection)
+    migrate_receipt_protocol_constraint(connection)?;
+    redact_historical_business_journals(connection)
+}
+
+fn redact_historical_business_journals(connection: &Connection) -> Result<(), HostError> {
+    let transaction = connection.unchecked_transaction().map_err(sql_error)?;
+    redact_historical_business_journal_column(
+        &transaction,
+        "business_workspace_events",
+        "payload_json",
+    )?;
+    redact_historical_business_journal_column(
+        &transaction,
+        "business_workspace_command_receipts",
+        "response_json",
+    )?;
+    transaction.commit().map_err(sql_error)
+}
+
+fn redact_historical_business_journal_column(
+    transaction: &Transaction<'_>,
+    table: &str,
+    column: &str,
+) -> Result<(), HostError> {
+    debug_assert!(matches!(
+        (table, column),
+        ("business_workspace_events", "payload_json")
+            | ("business_workspace_command_receipts", "response_json")
+    ));
+    let rows = {
+        let mut statement = transaction
+            .prepare(&format!("SELECT rowid, {column} FROM {table}"))
+            .map_err(sql_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_error)?;
+        rows
+    };
+    for (rowid, raw_json) in rows {
+        let mut value: serde_json::Value = serde_json::from_str(&raw_json).map_err(json_error)?;
+        if redact_sensitive_business_journal_fields(&mut value) {
+            transaction
+                .execute(
+                    &format!("UPDATE {table} SET {column} = ?1 WHERE rowid = ?2"),
+                    params![serde_json::to_string(&value).map_err(json_error)?, rowid],
+                )
+                .map_err(sql_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn redact_sensitive_business_journal_fields(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(fields) => {
+            let mut changed = false;
+            for (key, value) in fields {
+                if SENSITIVE_BUSINESS_JOURNAL_FIELDS.contains(&key.as_str()) {
+                    if value.as_str() != Some("") {
+                        *value = serde_json::Value::String(String::new());
+                        changed = true;
+                    }
+                } else {
+                    changed |= redact_sensitive_business_journal_fields(value);
+                }
+            }
+            changed
+        }
+        serde_json::Value::Array(values) => values.iter_mut().fold(false, |changed, value| {
+            redact_sensitive_business_journal_fields(value) || changed
+        }),
+        _ => false,
+    }
+}
+
+fn serialize_business_journal<T: serde::Serialize>(value: &T) -> Result<String, HostError> {
+    let mut value = serde_json::to_value(value).map_err(json_error)?;
+    redact_sensitive_business_journal_fields(&mut value);
+    serde_json::to_string(&value).map_err(json_error)
 }
 
 fn ensure_prefill_source_column(connection: &Connection) -> Result<(), HostError> {
@@ -348,6 +575,29 @@ fn ensure_prefill_source_column(connection: &Connection) -> Result<(), HostError
             .execute(
                 "ALTER TABLE business_workspaces
                  ADD COLUMN prefill_source_workspace_id TEXT",
+                [],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
+}
+
+fn ensure_settlement_batches_column(connection: &Connection) -> Result<(), HostError> {
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pragma_table_info('business_workspaces')
+                 WHERE name = 'settlement_batches_json'
+             )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(sql_error)?;
+    if !exists {
+        connection
+            .execute(
+                "ALTER TABLE business_workspaces
+                 ADD COLUMN settlement_batches_json TEXT NOT NULL DEFAULT '[]'",
                 [],
             )
             .map_err(sql_error)?;
@@ -523,7 +773,109 @@ fn ensure_document_lifecycle_columns(connection: &Connection) -> Result<(), Host
         "void_reason",
         "TEXT NOT NULL DEFAULT ''",
     )?;
+    ensure_table_column(
+        connection,
+        "business_documents",
+        "acceptance_batch_id",
+        "TEXT",
+    )?;
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_business_documents_acceptance_batch
+                 ON business_documents(acceptance_batch_id)
+                 WHERE acceptance_batch_id IS NOT NULL;",
+        )
+        .map_err(sql_error)?;
     Ok(())
+}
+
+fn ensure_acceptance_document_schema(connection: &Connection) -> Result<(), HostError> {
+    ensure_table_column(
+        connection,
+        "business_documents",
+        "acceptance_output_spec_id",
+        "TEXT",
+    )?;
+
+    let legacy_links = {
+        let mut statement = connection
+            .prepare(
+                "SELECT document.id, document.document_number, document.title,
+                        document.template_key, document.snapshot_json, batch.revision,
+                        batch.output_specs_json
+                 FROM business_documents document
+                 JOIN business_acceptance_batches batch
+                   ON batch.id = document.acceptance_batch_id
+                  AND batch.workspace_id = document.workspace_id
+                 WHERE document.kind = 'acceptance'
+                   AND document.acceptance_batch_id IS NOT NULL
+                   AND document.acceptance_output_spec_id IS NULL",
+            )
+            .map_err(sql_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .map_err(sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_error)?;
+        rows
+    };
+    let transaction = connection.unchecked_transaction().map_err(sql_error)?;
+    for (
+        document_id,
+        document_number,
+        title,
+        template_key,
+        snapshot_json,
+        batch_revision,
+        specs_json,
+    ) in legacy_links
+    {
+        let specs: Vec<BusinessAcceptanceOutputSpecRecord> =
+            serde_json::from_str(&specs_json).map_err(json_error)?;
+        let Some(spec) = specs.iter().find(|spec| {
+            spec.document_number == document_number
+                && spec.title == title
+                && spec.template_key == template_key
+        }) else {
+            continue;
+        };
+        let mut snapshot: BusinessDocumentSnapshot =
+            serde_json::from_str(&snapshot_json).map_err(json_error)?;
+        snapshot.acceptance_output_spec_id = Some(spec.id.clone());
+        snapshot
+            .acceptance_batch_revision
+            .get_or_insert(batch_revision);
+        transaction
+            .execute(
+                "UPDATE business_documents
+                 SET acceptance_output_spec_id = ?1, snapshot_json = ?2
+                 WHERE id = ?3 AND acceptance_output_spec_id IS NULL",
+                params![
+                    spec.id,
+                    serde_json::to_string(&snapshot).map_err(json_error)?,
+                    document_id,
+                ],
+            )
+            .map_err(sql_error)?;
+    }
+    transaction
+        .execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_business_documents_acceptance_output
+                 ON business_documents(workspace_id, acceptance_batch_id, acceptance_output_spec_id)
+                 WHERE acceptance_batch_id IS NOT NULL AND acceptance_output_spec_id IS NOT NULL;",
+        )
+        .map_err(sql_error)?;
+    transaction.commit().map_err(sql_error)
 }
 
 fn migrate_payment_ledger_schema(connection: &Connection) -> Result<(), HostError> {
@@ -832,11 +1184,19 @@ fn migrate_event_type_constraint(connection: &Connection) -> Result<(), HostErro
         ));
     };
     if table_sql.contains("businessWorkspace.reviewedContractPromoted")
+        && table_sql.contains("businessWorkspace.settlementBatchUpserted")
+        && table_sql.contains("businessWorkspace.settlementBatchVoided")
         && table_sql.contains("businessWorkspace.quoteConfirmed")
         && table_sql.contains("businessWorkspace.receiptRecorded")
         && table_sql.contains("businessWorkspace.receiptReversed")
         && table_sql.contains("businessWorkspace.requirementAdopted")
+        && table_sql.contains("businessWorkspace.acceptanceBatchCreated")
+        && table_sql.contains("businessWorkspace.acceptanceDocumentsPrepared")
+        && table_sql.contains("businessWorkspace.acceptanceMaterialUpserted")
         && table_sql.contains("businessWorkspace.archiveSnapshotPrepared")
+        && table_sql.contains("businessWorkspace.templateVersionNormalized")
+        && table_sql.contains("businessWorkspace.templateVersionApproved")
+        && table_sql.contains("businessWorkspace.templateVersionRejected")
     {
         return Ok(());
     }
@@ -854,14 +1214,21 @@ fn migrate_event_type_constraint(connection: &Connection) -> Result<(), HostErro
                     ('businessWorkspace.created','businessWorkspace.profileUpdated',
                      'businessWorkspace.documentCreated','businessWorkspace.documentStatusChanged',
                      'businessWorkspace.documentGenerated','businessWorkspace.reviewedContractPromoted',
-                     'businessWorkspace.paymentUpserted','businessWorkspace.quoteConfirmed',
+                     'businessWorkspace.paymentUpserted','businessWorkspace.settlementBatchUpserted',
+                     'businessWorkspace.settlementBatchVoided','businessWorkspace.quoteConfirmed',
                      'businessWorkspace.receiptRecorded','businessWorkspace.receiptReversed',
                      'businessWorkspace.requirementAdopted','businessWorkspace.customerUpserted',
                      'businessWorkspace.customerAssigned','businessWorkspace.milestoneUpserted',
                      'businessWorkspace.deliverableVersionRegistered','businessWorkspace.deliverySent',
                      'businessWorkspace.deliverySignoffRecorded','businessWorkspace.invoiceIssued',
                      'businessWorkspace.invoiceRedCorrected','businessWorkspace.invoiceAssetAttached',
-                     'businessWorkspace.archiveSnapshotPrepared','businessWorkspace.statusChanged')),
+                     'businessWorkspace.acceptanceBatchCreated','businessWorkspace.acceptanceDocumentsPrepared',
+                     'businessWorkspace.acceptanceMaterialUpserted',
+                     'businessWorkspace.archiveSnapshotPrepared',
+                     'businessWorkspace.templateVersionNormalized',
+                     'businessWorkspace.templateVersionApproved',
+                     'businessWorkspace.templateVersionRejected',
+                     'businessWorkspace.statusChanged')),
                 aggregate_id TEXT NOT NULL,
                 revision INTEGER NOT NULL CHECK(revision >= 1),
                 occurred_at INTEGER NOT NULL,
@@ -903,11 +1270,19 @@ fn migrate_receipt_protocol_constraint(connection: &Connection) -> Result<(), Ho
         ));
     };
     if table_sql.contains("businessWorkspace.promoteReviewedContract")
+        && table_sql.contains("businessWorkspace.upsertSettlementBatch")
+        && table_sql.contains("businessWorkspace.voidSettlementBatch")
         && table_sql.contains("businessWorkspace.confirmQuote")
         && table_sql.contains("businessWorkspace.recordReceipt")
         && table_sql.contains("businessWorkspace.reverseReceipt")
         && table_sql.contains("businessWorkspace.adoptLatestConfirmedRequirement")
+        && table_sql.contains("businessWorkspace.createAcceptanceBatch")
+        && table_sql.contains("businessWorkspace.prepareAcceptanceDocuments")
+        && table_sql.contains("businessWorkspace.upsertAcceptanceMaterial")
         && table_sql.contains("businessWorkspace.createArchiveSnapshot")
+        && table_sql.contains("businessWorkspace.normalizeLegacyTemplate")
+        && table_sql.contains("businessWorkspace.approveTemplateVersion")
+        && table_sql.contains("businessWorkspace.rejectTemplateVersion")
         && !table_sql.contains("CHECK(protocol_version = '1.4')")
     {
         return Ok(());
@@ -926,14 +1301,20 @@ fn migrate_receipt_protocol_constraint(connection: &Connection) -> Result<(), Ho
                     ('businessWorkspace.create','businessWorkspace.updateProfile',
                      'businessWorkspace.createDocument','businessWorkspace.changeDocumentStatus',
                      'businessWorkspace.generateDocument','businessWorkspace.promoteReviewedContract',
-                     'businessWorkspace.upsertPayment','businessWorkspace.confirmQuote',
+                     'businessWorkspace.upsertPayment','businessWorkspace.upsertSettlementBatch',
+                     'businessWorkspace.voidSettlementBatch','businessWorkspace.confirmQuote',
                      'businessWorkspace.recordReceipt','businessWorkspace.reverseReceipt',
                      'businessWorkspace.adoptLatestConfirmedRequirement','businessWorkspace.upsertCustomer',
                      'businessWorkspace.assignCustomer','businessWorkspace.upsertMilestone',
                      'businessWorkspace.registerDeliverableVersion','businessWorkspace.recordDeliverySent',
                      'businessWorkspace.recordDeliverySignoff','businessWorkspace.recordInvoiceIssued',
                      'businessWorkspace.recordInvoiceRedCorrection','businessWorkspace.attachInvoiceAsset',
+                     'businessWorkspace.createAcceptanceBatch','businessWorkspace.prepareAcceptanceDocuments',
+                     'businessWorkspace.upsertAcceptanceMaterial',
                      'businessWorkspace.createArchiveSnapshot',
+                     'businessWorkspace.normalizeLegacyTemplate',
+                     'businessWorkspace.approveTemplateVersion',
+                     'businessWorkspace.rejectTemplateVersion',
                      'businessWorkspace.changeStatus')),
                 protocol_version TEXT NOT NULL,
                 deadline_at INTEGER,
@@ -987,7 +1368,9 @@ pub fn execute_command(
     if let Err(error) = reconcile_generated_assets(connection, vault_root) {
         eprintln!("business generated asset reconciliation deferred: {error}");
     }
-    if matches!(command, NormalizedCommand::GenerateDocument { .. }) {
+    if matches!(command, NormalizedCommand::NormalizeLegacyTemplate { .. }) {
+        execute_normalize_legacy_template(connection, vault_root, command, fingerprint)
+    } else if matches!(command, NormalizedCommand::GenerateDocument { .. }) {
         execute_generate_document(connection, vault_root, command, fingerprint)
     } else if matches!(command, NormalizedCommand::CreateArchiveSnapshot { .. }) {
         execute_create_archive_snapshot(connection, vault_root, command, fingerprint)
@@ -1267,9 +1650,12 @@ pub fn reconcile_generated_assets(
                  LEFT JOIN business_documents d ON d.output_asset_id = a.id
                  LEFT JOIN business_archive_snapshots snapshot
                    ON snapshot.manifest_asset_id = a.id OR snapshot.package_asset_id = a.id
+                 LEFT JOIN business_template_versions template
+                   ON template.normalized_asset_id = a.id
                  WHERE (origin.origin = 'businessDocument' AND d.id IS NULL)
                     OR (origin.origin IN ('generatedArchiveManifest','generatedArchivePackage')
-                        AND snapshot.id IS NULL)",
+                        AND snapshot.id IS NULL)
+                    OR (origin.origin = 'normalizedTemplate' AND template.id IS NULL)",
             )
             .map_err(sql_error)?;
         let collected = statement
@@ -1287,7 +1673,7 @@ pub fn reconcile_generated_assets(
     };
     let mut cleaned = 0;
     for (asset_id, original_name, origin) in assets {
-        if origin == "businessDocument"
+        if matches!(origin.as_str(), "businessDocument" | "normalizedTemplate")
             && document_engine::generation_is_active(vault_root, &original_name)?
         {
             continue;
@@ -1330,6 +1716,18 @@ enum NormalizedCommand {
         meta: CommandMeta,
         payload: CreateBusinessDocumentPayload,
     },
+    CreateAcceptanceBatch {
+        meta: CommandMeta,
+        payload: CreateBusinessAcceptanceBatchPayload,
+    },
+    PrepareAcceptanceDocuments {
+        meta: CommandMeta,
+        payload: PrepareBusinessAcceptanceDocumentsPayload,
+    },
+    UpsertAcceptanceMaterial {
+        meta: CommandMeta,
+        payload: UpsertBusinessAcceptanceMaterialPayload,
+    },
     PromoteReviewedContract {
         meta: CommandMeta,
         payload: PromoteReviewedContractPayload,
@@ -1345,6 +1743,14 @@ enum NormalizedCommand {
     UpsertPayment {
         meta: CommandMeta,
         payload: UpsertBusinessPaymentPayload,
+    },
+    UpsertSettlementBatch {
+        meta: CommandMeta,
+        payload: UpsertBusinessSettlementBatchPayload,
+    },
+    VoidSettlementBatch {
+        meta: CommandMeta,
+        payload: VoidBusinessSettlementBatchPayload,
     },
     ConfirmQuote {
         meta: CommandMeta,
@@ -1402,6 +1808,18 @@ enum NormalizedCommand {
         meta: CommandMeta,
         payload: CreateBusinessArchiveSnapshotPayload,
     },
+    NormalizeLegacyTemplate {
+        meta: CommandMeta,
+        payload: NormalizeBusinessLegacyTemplatePayload,
+    },
+    ApproveTemplateVersion {
+        meta: CommandMeta,
+        payload: ApproveBusinessTemplateVersionPayload,
+    },
+    RejectTemplateVersion {
+        meta: CommandMeta,
+        payload: RejectBusinessTemplateVersionPayload,
+    },
     ChangeStatus {
         meta: CommandMeta,
         payload: ChangeBusinessWorkspaceStatusPayload,
@@ -1414,10 +1832,15 @@ impl NormalizedCommand {
             Self::Create { meta, .. }
             | Self::UpdateProfile { meta, .. }
             | Self::CreateDocument { meta, .. }
+            | Self::CreateAcceptanceBatch { meta, .. }
+            | Self::PrepareAcceptanceDocuments { meta, .. }
+            | Self::UpsertAcceptanceMaterial { meta, .. }
             | Self::PromoteReviewedContract { meta, .. }
             | Self::ChangeDocumentStatus { meta, .. }
             | Self::GenerateDocument { meta, .. }
             | Self::UpsertPayment { meta, .. }
+            | Self::UpsertSettlementBatch { meta, .. }
+            | Self::VoidSettlementBatch { meta, .. }
             | Self::ConfirmQuote { meta, .. }
             | Self::RecordReceipt { meta, .. }
             | Self::ReverseReceipt { meta, .. }
@@ -1432,6 +1855,9 @@ impl NormalizedCommand {
             | Self::RecordInvoiceRedCorrection { meta, .. }
             | Self::AttachInvoiceAsset { meta, .. }
             | Self::CreateArchiveSnapshot { meta, .. }
+            | Self::NormalizeLegacyTemplate { meta, .. }
+            | Self::ApproveTemplateVersion { meta, .. }
+            | Self::RejectTemplateVersion { meta, .. }
             | Self::ChangeStatus { meta, .. } => meta,
         }
     }
@@ -1441,10 +1867,17 @@ impl NormalizedCommand {
             Self::Create { .. } => "businessWorkspace.create",
             Self::UpdateProfile { .. } => "businessWorkspace.updateProfile",
             Self::CreateDocument { .. } => "businessWorkspace.createDocument",
+            Self::CreateAcceptanceBatch { .. } => "businessWorkspace.createAcceptanceBatch",
+            Self::PrepareAcceptanceDocuments { .. } => {
+                "businessWorkspace.prepareAcceptanceDocuments"
+            }
+            Self::UpsertAcceptanceMaterial { .. } => "businessWorkspace.upsertAcceptanceMaterial",
             Self::PromoteReviewedContract { .. } => "businessWorkspace.promoteReviewedContract",
             Self::ChangeDocumentStatus { .. } => "businessWorkspace.changeDocumentStatus",
             Self::GenerateDocument { .. } => "businessWorkspace.generateDocument",
             Self::UpsertPayment { .. } => "businessWorkspace.upsertPayment",
+            Self::UpsertSettlementBatch { .. } => "businessWorkspace.upsertSettlementBatch",
+            Self::VoidSettlementBatch { .. } => "businessWorkspace.voidSettlementBatch",
             Self::ConfirmQuote { .. } => "businessWorkspace.confirmQuote",
             Self::RecordReceipt { .. } => "businessWorkspace.recordReceipt",
             Self::ReverseReceipt { .. } => "businessWorkspace.reverseReceipt",
@@ -1465,6 +1898,9 @@ impl NormalizedCommand {
             }
             Self::AttachInvoiceAsset { .. } => "businessWorkspace.attachInvoiceAsset",
             Self::CreateArchiveSnapshot { .. } => "businessWorkspace.createArchiveSnapshot",
+            Self::NormalizeLegacyTemplate { .. } => "businessWorkspace.normalizeLegacyTemplate",
+            Self::ApproveTemplateVersion { .. } => "businessWorkspace.approveTemplateVersion",
+            Self::RejectTemplateVersion { .. } => "businessWorkspace.rejectTemplateVersion",
             Self::ChangeStatus { .. } => "businessWorkspace.changeStatus",
         }
     }
@@ -1614,7 +2050,86 @@ fn normalize_command(
                     title: normalize_required("title", payload.title, MAX_SHORT_CHARS)?,
                     template_key,
                     payment_id,
+                    acceptance_batch_id: payload
+                        .acceptance_batch_id
+                        .map(|id| normalize_uuid("acceptanceBatchId", id))
+                        .transpose()?,
                 },
+            })
+        }
+        BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            Ok(NormalizedCommand::CreateAcceptanceBatch {
+                meta,
+                payload: normalize_create_acceptance_batch_payload(payload)?,
+            })
+        }
+        BusinessWorkspaceCommandEnvelope::PrepareAcceptanceDocuments {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            Ok(NormalizedCommand::PrepareAcceptanceDocuments {
+                meta,
+                payload: PrepareBusinessAcceptanceDocumentsPayload {
+                    workspace_id: normalize_uuid("workspaceId", payload.workspace_id)?,
+                    batch_id: normalize_uuid("acceptanceBatchId", payload.batch_id)?,
+                },
+            })
+        }
+        BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            Ok(NormalizedCommand::UpsertAcceptanceMaterial {
+                meta,
+                payload: normalize_upsert_acceptance_material_payload(payload)?,
             })
         }
         BusinessWorkspaceCommandEnvelope::PromoteReviewedContract {
@@ -1744,6 +2259,64 @@ fn normalize_command(
                 payload: UpsertBusinessPaymentPayload {
                     workspace_id: normalize_uuid("workspaceId", payload.workspace_id)?,
                     payment: normalize_payment_input(payload.payment)?,
+                },
+            })
+        }
+        BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch {
+            command_id,
+            protocol_version,
+            context,
+            mut payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            payload.workspace_id = normalize_uuid("workspaceId", payload.workspace_id)?;
+            payload.batch.id = payload
+                .batch
+                .id
+                .map(|value| normalize_uuid("batch.id", value))
+                .transpose()?;
+            for line in &mut payload.batch.lines {
+                line.deliverable_id = normalize_uuid("deliverableId", line.deliverable_id.clone())?;
+            }
+            Ok(NormalizedCommand::UpsertSettlementBatch { meta, payload })
+        }
+        BusinessWorkspaceCommandEnvelope::VoidSettlementBatch {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            Ok(NormalizedCommand::VoidSettlementBatch {
+                meta,
+                payload: VoidBusinessSettlementBatchPayload {
+                    workspace_id: normalize_uuid("workspaceId", payload.workspace_id)?,
+                    batch_id: normalize_uuid("batchId", payload.batch_id)?,
+                    reason: payload.reason,
                 },
             })
         }
@@ -2167,6 +2740,123 @@ fn normalize_command(
                 },
             })
         }
+        BusinessWorkspaceCommandEnvelope::NormalizeLegacyTemplate {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            let template_key =
+                normalize_required("templateKey", payload.template_key, MAX_SHORT_CHARS)?;
+            if template_key
+                != document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+            {
+                return Err(HostError::new(
+                    "BUSINESS_LEGACY_TEMPLATE_UNSUPPORTED",
+                    "legacy DOC normalization is only registered for the payment application and settlement calculation template",
+                    false,
+                ));
+            }
+            let mapping_version =
+                normalize_required("mappingVersion", payload.mapping_version, MAX_SHORT_CHARS)?;
+            if document_engine::expected_template_mapping_version(&template_key)
+                != Some(mapping_version.as_str())
+            {
+                return Err(HostError::new(
+                    "BUSINESS_TEMPLATE_MAPPING_VERSION_MISMATCH",
+                    "mappingVersion does not match the registered template renderer",
+                    false,
+                ));
+            }
+            Ok(NormalizedCommand::NormalizeLegacyTemplate {
+                meta,
+                payload: NormalizeBusinessLegacyTemplatePayload {
+                    workspace_id: normalize_uuid("workspaceId", payload.workspace_id)?,
+                    source_asset_id: normalize_uuid("sourceAssetId", payload.source_asset_id)?,
+                    expected_source_sha256: normalize_sha256(
+                        "expectedSourceSha256",
+                        payload.expected_source_sha256,
+                    )?,
+                    template_key,
+                    mapping_version,
+                },
+            })
+        }
+        BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            Ok(NormalizedCommand::ApproveTemplateVersion {
+                meta,
+                payload: ApproveBusinessTemplateVersionPayload {
+                    workspace_id: normalize_uuid("workspaceId", payload.workspace_id)?,
+                    template_version_id: normalize_uuid(
+                        "templateVersionId",
+                        payload.template_version_id,
+                    )?,
+                    note: normalize_required("note", payload.note, MAX_TEXT_CHARS)?,
+                },
+            })
+        }
+        BusinessWorkspaceCommandEnvelope::RejectTemplateVersion {
+            command_id,
+            protocol_version,
+            context,
+            payload,
+            idempotency_key,
+            expected_revision,
+            deadline_at,
+        } => {
+            validate_expected_revision(expected_revision)?;
+            let meta = normalize_meta(
+                command_id,
+                protocol_version,
+                normalize_context(context)?,
+                idempotency_key,
+                expected_revision,
+                deadline_at,
+            )?;
+            ensure_current_business_protocol(&meta)?;
+            Ok(NormalizedCommand::RejectTemplateVersion {
+                meta,
+                payload: RejectBusinessTemplateVersionPayload {
+                    workspace_id: normalize_uuid("workspaceId", payload.workspace_id)?,
+                    template_version_id: normalize_uuid(
+                        "templateVersionId",
+                        payload.template_version_id,
+                    )?,
+                    note: normalize_required("note", payload.note, MAX_TEXT_CHARS)?,
+                },
+            })
+        }
         BusinessWorkspaceCommandEnvelope::ChangeStatus {
             command_id,
             protocol_version,
@@ -2209,6 +2899,1056 @@ fn ensure_current_business_protocol(meta: &CommandMeta) -> Result<(), HostError>
             false,
         ))
     }
+}
+
+fn normalize_create_acceptance_batch_payload(
+    mut payload: CreateBusinessAcceptanceBatchPayload,
+) -> Result<CreateBusinessAcceptanceBatchPayload, HostError> {
+    payload.workspace_id = normalize_uuid("workspaceId", payload.workspace_id)?;
+    payload.label = normalize_required("acceptance batch label", payload.label, MAX_SHORT_CHARS)?;
+    if payload.requirements.is_empty()
+        || payload.requirements.len() > MAX_ACCEPTANCE_REQUIREMENTS_PER_BATCH
+    {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_REQUIREMENTS_INVALID",
+            format!(
+                "acceptance batch requires 1..={MAX_ACCEPTANCE_REQUIREMENTS_PER_BATCH} configurable content slots"
+            ),
+            false,
+        ));
+    }
+    if payload.output_specs.is_empty()
+        || payload.output_specs.len() > MAX_ACCEPTANCE_OUTPUT_SPECS_PER_BATCH
+    {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_OUTPUT_SPECS_INVALID",
+            format!(
+                "acceptance batch requires 1..={MAX_ACCEPTANCE_OUTPUT_SPECS_PER_BATCH} configurable output specs"
+            ),
+            false,
+        ));
+    }
+    let mut requirement_ids = HashSet::new();
+    for requirement in &mut payload.requirements {
+        requirement.id = requirement
+            .id
+            .take()
+            .map(|id| normalize_uuid("acceptance requirement id", id))
+            .transpose()?;
+        requirement.label = normalize_required(
+            "acceptance requirement label",
+            requirement.label.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        if requirement.required_group_count == 0 || requirement.required_group_count > 10_000 {
+            return Err(HostError::new(
+                "BUSINESS_ACCEPTANCE_REQUIRED_GROUP_COUNT_INVALID",
+                "acceptance requiredGroupCount must be in 1..=10000",
+                false,
+            ));
+        }
+        if requirement
+            .id
+            .as_ref()
+            .is_some_and(|id| !requirement_ids.insert(id.clone()))
+        {
+            return Err(HostError::new(
+                "BUSINESS_ACCEPTANCE_REQUIREMENT_DUPLICATE",
+                "acceptance requirement ids must be unique",
+                false,
+            ));
+        }
+    }
+    let mut output_ids = HashSet::new();
+    let mut output_codes = HashSet::new();
+    let mut document_numbers = HashSet::new();
+    for output in &mut payload.output_specs {
+        output.id = output
+            .id
+            .take()
+            .map(|id| normalize_uuid("acceptance output spec id", id))
+            .transpose()?;
+        output.output_code = normalize_required(
+            "acceptance output outputCode",
+            output.output_code.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        output.document_number = normalize_required(
+            "acceptance output documentNumber",
+            output.document_number.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        output.title = normalize_required(
+            "acceptance output title",
+            output.title.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        output.template_key = normalize_required(
+            "acceptance output templateKey",
+            output.template_key.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        document_engine::validate_template_for_format(
+            &BusinessDocumentKind::Acceptance,
+            &output.template_key,
+            &output.format,
+        )?;
+        output.template_asset_id = output
+            .template_asset_id
+            .take()
+            .map(|id| normalize_uuid("acceptance output templateAssetId", id))
+            .transpose()?;
+        output.template_source_sha256 = normalize_optional(
+            "acceptance output templateSourceSha256",
+            output.template_source_sha256.take(),
+            64,
+        )?
+        .map(|sha256| normalize_sha256("acceptance output templateSourceSha256", sha256))
+        .transpose()?;
+        output.template_mapping_version = normalize_text(
+            "acceptance output templateMappingVersion",
+            output.template_mapping_version.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        let source_binding_count = usize::from(output.template_asset_id.is_some())
+            + usize::from(output.template_source_sha256.is_some())
+            + usize::from(!output.template_mapping_version.is_empty());
+        if document_engine::template_requires_source_asset(&output.template_key) {
+            if source_binding_count != 3 {
+                return Err(HostError::new(
+                    "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                    "registered customer templates require templateAssetId, templateSourceSha256 and templateMappingVersion",
+                    false,
+                ));
+            }
+            if let Some(expected_sha256) =
+                document_engine::expected_template_source_sha256(&output.template_key)
+            {
+                if output.template_source_sha256.as_deref() != Some(expected_sha256) {
+                    return Err(HostError::new(
+                        "BUSINESS_TEMPLATE_SOURCE_HASH_MISMATCH",
+                        "templateSourceSha256 does not match the registered template version",
+                        false,
+                    ));
+                }
+            }
+            if output.template_mapping_version.as_str()
+                != document_engine::expected_template_mapping_version(&output.template_key)
+                    .expect("source-backed template must register a mapping version")
+            {
+                return Err(HostError::new(
+                    "BUSINESS_TEMPLATE_MAPPING_VERSION_MISMATCH",
+                    "templateMappingVersion does not match the registered template renderer",
+                    false,
+                ));
+            }
+        } else if source_binding_count != 0 {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_UNEXPECTED",
+                "builtin templates cannot bind an external template source",
+                false,
+            ));
+        }
+        output.contract_settlement = output
+            .contract_settlement
+            .take()
+            .map(normalize_contract_settlement_data)
+            .transpose()?;
+        output.service_settlement_items = output
+            .service_settlement_items
+            .drain(..)
+            .enumerate()
+            .map(|(index, item)| normalize_service_settlement_item(index, item))
+            .collect::<Result<Vec<_>, _>>()?;
+        output.payment_application = output
+            .payment_application
+            .take()
+            .map(normalize_payment_application_input)
+            .transpose()?;
+        output.video_completion_acceptance = output
+            .video_completion_acceptance
+            .take()
+            .map(normalize_video_completion_acceptance_data)
+            .transpose()?;
+        output.production_result_confirmation = output
+            .production_result_confirmation
+            .take()
+            .map(normalize_production_result_confirmation_data)
+            .transpose()?;
+        match output.template_key.as_str() {
+            document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY => {
+                if output.output_code != "video-completion-acceptance" {
+                    return Err(HostError::new(
+                        "BUSINESS_ACCEPTANCE_OUTPUT_CODE_MISMATCH",
+                        "video completion acceptance template requires outputCode video-completion-acceptance",
+                        false,
+                    ));
+                }
+                if output.video_completion_acceptance.is_none()
+                    || output.production_result_confirmation.is_some()
+                    || output.contract_settlement.is_some()
+                    || !output.service_settlement_items.is_empty()
+                    || output.payment_application.is_some()
+                {
+                    return Err(HostError::new(
+                        "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_DATA_REQUIRED",
+                        "video completion acceptance template requires videoCompletionAcceptance and forbids settlement payloads",
+                        false,
+                    ));
+                }
+            }
+            document_engine::BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY => {
+                if output.output_code != "production-result-confirmation" {
+                    return Err(HostError::new(
+                        "BUSINESS_ACCEPTANCE_OUTPUT_CODE_MISMATCH",
+                        "production result confirmation template requires outputCode production-result-confirmation",
+                        false,
+                    ));
+                }
+                if output.production_result_confirmation.is_none()
+                    || output.video_completion_acceptance.is_some()
+                    || output.contract_settlement.is_some()
+                    || !output.service_settlement_items.is_empty()
+                    || output.payment_application.is_some()
+                {
+                    return Err(HostError::new(
+                        "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_DATA_REQUIRED",
+                        "production result confirmation template requires productionResultConfirmation and forbids other specialized payloads",
+                        false,
+                    ));
+                }
+            }
+            document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+                if output.output_code != "contract-settlement" {
+                    return Err(HostError::new(
+                        "BUSINESS_ACCEPTANCE_OUTPUT_CODE_MISMATCH",
+                        "contract settlement template requires outputCode contract-settlement",
+                        false,
+                    ));
+                }
+                if output.contract_settlement.is_none()
+                    || !output.service_settlement_items.is_empty()
+                    || output.payment_application.is_some()
+                {
+                    return Err(HostError::new(
+                        "BUSINESS_CONTRACT_SETTLEMENT_DATA_REQUIRED",
+                        "contract settlement template requires contractSettlement and forbids serviceSettlementItems",
+                        false,
+                    ));
+                }
+            }
+            document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+                if output.output_code != "service-settlement-list" {
+                    return Err(HostError::new(
+                        "BUSINESS_ACCEPTANCE_OUTPUT_CODE_MISMATCH",
+                        "service settlement template requires outputCode service-settlement-list",
+                        false,
+                    ));
+                }
+                if output.contract_settlement.is_some()
+                    || output.service_settlement_items.is_empty()
+                    || output.payment_application.is_some()
+                {
+                    return Err(HostError::new(
+                        "BUSINESS_SERVICE_SETTLEMENT_DATA_REQUIRED",
+                        "service settlement template requires serviceSettlementItems and forbids contractSettlement",
+                        false,
+                    ));
+                }
+            }
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY => {
+                if output.output_code != "payment-application-settlement-calculation" {
+                    return Err(HostError::new(
+                        "BUSINESS_ACCEPTANCE_OUTPUT_CODE_MISMATCH",
+                        "payment application template requires outputCode payment-application-settlement-calculation",
+                        false,
+                    ));
+                }
+                if output.contract_settlement.is_some()
+                    || !output.service_settlement_items.is_empty()
+                    || output.payment_application.is_none()
+                {
+                    return Err(HostError::new(
+                        "BUSINESS_PAYMENT_APPLICATION_DATA_REQUIRED",
+                        "payment application template requires paymentApplication and forbids other settlement payloads",
+                        false,
+                    ));
+                }
+            }
+            _ if output.contract_settlement.is_some()
+                || !output.service_settlement_items.is_empty()
+                || output.payment_application.is_some()
+                || output.video_completion_acceptance.is_some()
+                || output.production_result_confirmation.is_some() =>
+            {
+                return Err(HostError::new(
+                    "BUSINESS_TEMPLATE_DATA_UNEXPECTED",
+                    "specialized settlement data is only valid for its registered template",
+                    false,
+                ));
+            }
+            _ => {}
+        }
+        if output.requirement_ids.is_empty() {
+            return Err(HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_REQUIREMENTS_INVALID",
+                "acceptance output requirementIds must not be empty",
+                false,
+            ));
+        }
+        let mut output_requirement_ids = HashSet::new();
+        for requirement_id in &mut output.requirement_ids {
+            *requirement_id =
+                normalize_uuid("acceptance output requirementId", requirement_id.clone())?;
+            if !requirement_ids.contains(requirement_id) {
+                return Err(HostError::new(
+                    "BUSINESS_ACCEPTANCE_OUTPUT_REQUIREMENT_NOT_FOUND",
+                    "acceptance output requirementIds must reference requirements in the same batch",
+                    false,
+                ));
+            }
+            if !output_requirement_ids.insert(requirement_id.clone()) {
+                return Err(HostError::new(
+                    "BUSINESS_ACCEPTANCE_OUTPUT_REQUIREMENT_DUPLICATE",
+                    "acceptance output requirementIds must be unique",
+                    false,
+                ));
+            }
+        }
+        if output
+            .id
+            .as_ref()
+            .is_some_and(|id| !output_ids.insert(id.clone()))
+            || !output_codes.insert(output.output_code.clone())
+            || !document_numbers.insert(output.document_number.clone())
+        {
+            return Err(HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_DUPLICATE",
+                "acceptance output ids, output codes and document numbers must be unique",
+                false,
+            ));
+        }
+    }
+    Ok(payload)
+}
+
+fn normalize_video_completion_acceptance_data(
+    mut data: BusinessVideoCompletionAcceptanceData,
+) -> Result<BusinessVideoCompletionAcceptanceData, HostError> {
+    data.contract_title = normalize_required(
+        "videoCompletionAcceptance.contractTitle",
+        data.contract_title,
+        MAX_SHORT_CHARS,
+    )?;
+    data.project_title = normalize_required(
+        "videoCompletionAcceptance.projectTitle",
+        data.project_title,
+        MAX_SHORT_CHARS,
+    )?;
+    data.completion_date = normalize_required(
+        "videoCompletionAcceptance.completionDate",
+        data.completion_date,
+        MAX_SHORT_CHARS,
+    )?;
+    data.acceptance_conclusion = normalize_required(
+        "videoCompletionAcceptance.acceptanceConclusion",
+        data.acceptance_conclusion,
+        MAX_TEXT_CHARS,
+    )?;
+    if data.delivery_groups.is_empty() || data.delivery_groups.len() > MAX_VIDEO_ACCEPTANCE_GROUPS {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_GROUPS_INVALID",
+            format!(
+                "video completion acceptance requires 1..={MAX_VIDEO_ACCEPTANCE_GROUPS} delivery groups"
+            ),
+            false,
+        ));
+    }
+
+    let mut group_keys = HashSet::new();
+    let mut video_count = 0_usize;
+    for (group_index, group) in data.delivery_groups.iter_mut().enumerate() {
+        group.group_key = normalize_required(
+            &format!("videoCompletionAcceptance.deliveryGroups[{group_index}].groupKey"),
+            group.group_key.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        if !group_keys.insert(group.group_key.clone()) {
+            return Err(HostError::new(
+                "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_GROUP_DUPLICATE",
+                "video completion acceptance groupKey values must be unique",
+                false,
+            ));
+        }
+        group.name = normalize_required(
+            &format!("videoCompletionAcceptance.deliveryGroups[{group_index}].name"),
+            group.name.clone(),
+            MAX_SHORT_CHARS,
+        )?;
+        group.service_description = normalize_required(
+            &format!("videoCompletionAcceptance.deliveryGroups[{group_index}].serviceDescription"),
+            group.service_description.clone(),
+            MAX_TEXT_CHARS,
+        )?;
+        if group.videos.is_empty() {
+            return Err(HostError::new(
+                "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_VIDEOS_INVALID",
+                "each video completion acceptance delivery group requires at least one video",
+                false,
+            ));
+        }
+        for (video_index, video) in group.videos.iter_mut().enumerate() {
+            video_count += 1;
+            if video_count > MAX_VIDEO_ACCEPTANCE_VIDEOS {
+                return Err(HostError::new(
+                    "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_VIDEOS_INVALID",
+                    format!(
+                        "video completion acceptance cannot exceed {MAX_VIDEO_ACCEPTANCE_VIDEOS} videos"
+                    ),
+                    false,
+                ));
+            }
+            let prefix = format!(
+                "videoCompletionAcceptance.deliveryGroups[{group_index}].videos[{video_index}]"
+            );
+            video.title = normalize_required(
+                &format!("{prefix}.title"),
+                video.title.clone(),
+                MAX_SHORT_CHARS,
+            )?;
+            video.video_type = normalize_required(
+                &format!("{prefix}.videoType"),
+                video.video_type.clone(),
+                MAX_SHORT_CHARS,
+            )?;
+            video.content = normalize_required(
+                &format!("{prefix}.content"),
+                video.content.clone(),
+                MAX_TEXT_CHARS,
+            )?;
+            video.duration = normalize_required(
+                &format!("{prefix}.duration"),
+                video.duration.clone(),
+                MAX_SHORT_CHARS,
+            )?;
+            video.asset_reference.asset_id = normalize_uuid(
+                &format!("{prefix}.assetReference.assetId"),
+                video.asset_reference.asset_id.clone(),
+            )?;
+            video.asset_reference.file_name = normalize_required(
+                &format!("{prefix}.assetReference.fileName"),
+                video.asset_reference.file_name.clone(),
+                MAX_SHORT_CHARS,
+            )?;
+            video.asset_reference.sha256 = normalize_sha256(
+                &format!("{prefix}.assetReference.sha256"),
+                video.asset_reference.sha256.clone(),
+            )?;
+            video.asset_reference.external_link = normalize_optional(
+                &format!("{prefix}.assetReference.externalLink"),
+                video.asset_reference.external_link.take(),
+                MAX_TEXT_CHARS,
+            )?;
+            if video
+                .asset_reference
+                .external_link
+                .as_deref()
+                .is_some_and(|link| !(link.starts_with("https://") || link.starts_with("http://")))
+            {
+                return Err(HostError::new(
+                    "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_LINK_INVALID",
+                    "video completion acceptance externalLink must use HTTP(S)",
+                    false,
+                ));
+            }
+            if video.screenshots.is_empty()
+                || video.screenshots.len() > MAX_VIDEO_ACCEPTANCE_SCREENSHOTS_PER_VIDEO
+            {
+                return Err(HostError::new(
+                    "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_SCREENSHOTS_INVALID",
+                    format!(
+                        "each video requires 1..={MAX_VIDEO_ACCEPTANCE_SCREENSHOTS_PER_VIDEO} screenshots"
+                    ),
+                    false,
+                ));
+            }
+            for (screenshot_index, screenshot) in video.screenshots.iter_mut().enumerate() {
+                let screenshot_prefix = format!("{prefix}.screenshots[{screenshot_index}]");
+                screenshot.asset_id = normalize_uuid(
+                    &format!("{screenshot_prefix}.assetId"),
+                    screenshot.asset_id.clone(),
+                )?;
+                screenshot.sha256 = normalize_sha256(
+                    &format!("{screenshot_prefix}.sha256"),
+                    screenshot.sha256.clone(),
+                )?;
+                screenshot.caption = normalize_text(
+                    &format!("{screenshot_prefix}.caption"),
+                    screenshot.caption.clone(),
+                    MAX_SHORT_CHARS,
+                )?;
+            }
+        }
+    }
+    Ok(data)
+}
+
+fn normalize_production_result_confirmation_data(
+    mut data: BusinessProductionResultConfirmationData,
+) -> Result<BusinessProductionResultConfirmationData, HostError> {
+    for (field, value, max) in [
+        (
+            "productionResultConfirmation.attachmentLabel",
+            &mut data.attachment_label,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.contractTitle",
+            &mut data.contract_title,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.projectTitle",
+            &mut data.project_title,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.category",
+            &mut data.category,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.contractDeliverableSummary",
+            &mut data.contract_deliverable_summary,
+            MAX_TEXT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.supplierLegalName",
+            &mut data.supplier_legal_name,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.procurementPeriod",
+            &mut data.procurement_period,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.acceptanceDescription",
+            &mut data.acceptance_description,
+            MAX_TEXT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.penaltyOrAddition",
+            &mut data.penalty_or_addition,
+            MAX_TEXT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.completionDate",
+            &mut data.completion_date,
+            MAX_SHORT_CHARS,
+        ),
+        (
+            "productionResultConfirmation.acceptanceDate",
+            &mut data.acceptance_date,
+            MAX_SHORT_CHARS,
+        ),
+    ] {
+        *value = normalize_required(field, std::mem::take(value), max)?;
+    }
+    if !(0..=MAX_MONEY_CENTS).contains(&data.payment_amount_cents) {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_AMOUNT_INVALID",
+            "production result confirmation paymentAmountCents is outside the supported range",
+            false,
+        ));
+    }
+    if !data.clean_highlights_confirmed {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_HIGHLIGHT_CONFIRMATION_REQUIRED",
+            "production result confirmation requires explicit cleanHighlightsConfirmed before generation",
+            false,
+        ));
+    }
+    if !data.manually_confirmed {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_CONFIRMATION_REQUIRED",
+            "production result confirmation requires explicit manual confirmation before generation",
+            false,
+        ));
+    }
+    if data.delivery_items.is_empty()
+        || data.delivery_items.len() > MAX_PRODUCTION_RESULT_CONFIRMATION_DELIVERY_ITEMS
+    {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_DELIVERY_ITEMS_INVALID",
+            format!(
+                "production result confirmation requires 1..={} delivery items",
+                MAX_PRODUCTION_RESULT_CONFIRMATION_DELIVERY_ITEMS
+            ),
+            false,
+        ));
+    }
+
+    let mut item_keys = HashSet::new();
+    let mut storyboard_numbers = HashSet::new();
+    let mut shot_numbers = HashSet::new();
+    let mut reference_keys = HashSet::new();
+    let mut storyboard_count = 0_usize;
+    let mut shot_count = 0_usize;
+    let mut image_count = 0_usize;
+    for (item_index, item) in data.delivery_items.iter_mut().enumerate() {
+        let item_prefix = format!("productionResultConfirmation.deliveryItems[{item_index}]");
+        item.item_key = normalize_required(
+            &format!("{item_prefix}.itemKey"),
+            std::mem::take(&mut item.item_key),
+            MAX_SHORT_CHARS,
+        )?;
+        if !item_keys.insert(item.item_key.clone()) {
+            return Err(HostError::new(
+                "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_DELIVERY_ITEM_DUPLICATE",
+                "production result confirmation delivery item keys must be unique",
+                false,
+            ));
+        }
+        item.title = normalize_required(
+            &format!("{item_prefix}.title"),
+            std::mem::take(&mut item.title),
+            MAX_SHORT_CHARS,
+        )?;
+        item.deliverable_summary = normalize_required(
+            &format!("{item_prefix}.deliverableSummary"),
+            std::mem::take(&mut item.deliverable_summary),
+            MAX_TEXT_CHARS,
+        )?;
+        for (image_index, image) in item.evidence_images.iter_mut().enumerate() {
+            normalize_production_result_confirmation_asset_reference(
+                &format!("{item_prefix}.evidenceImages[{image_index}]"),
+                image,
+                &mut reference_keys,
+            )?;
+            image_count += 1;
+        }
+        for (storyboard_index, storyboard) in item.storyboards.iter_mut().enumerate() {
+            storyboard_count += 1;
+            let storyboard_prefix = format!("{item_prefix}.storyboards[{storyboard_index}]");
+            storyboard.storyboard_number = normalize_required(
+                &format!("{storyboard_prefix}.storyboardNumber"),
+                std::mem::take(&mut storyboard.storyboard_number),
+                MAX_SHORT_CHARS,
+            )?;
+            if !storyboard_numbers.insert(storyboard.storyboard_number.clone()) {
+                return Err(HostError::new(
+                    "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_STORYBOARD_DUPLICATE",
+                    "production result confirmation storyboard numbers must be unique",
+                    false,
+                ));
+            }
+            storyboard.title = normalize_required(
+                &format!("{storyboard_prefix}.title"),
+                std::mem::take(&mut storyboard.title),
+                MAX_SHORT_CHARS,
+            )?;
+            storyboard.description = normalize_required(
+                &format!("{storyboard_prefix}.description"),
+                std::mem::take(&mut storyboard.description),
+                MAX_TEXT_CHARS,
+            )?;
+            if storyboard.shots.is_empty() {
+                return Err(HostError::new(
+                    "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_SHOTS_INVALID",
+                    "each production result confirmation storyboard requires shots",
+                    false,
+                ));
+            }
+            for (shot_index, shot) in storyboard.shots.iter_mut().enumerate() {
+                shot_count += 1;
+                let shot_prefix = format!("{storyboard_prefix}.shots[{shot_index}]");
+                shot.shot_number = normalize_required(
+                    &format!("{shot_prefix}.shotNumber"),
+                    std::mem::take(&mut shot.shot_number),
+                    MAX_SHORT_CHARS,
+                )?;
+                if !shot_numbers.insert(shot.shot_number.clone()) {
+                    return Err(HostError::new(
+                        "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_SHOT_DUPLICATE",
+                        "production result confirmation shot numbers must be unique",
+                        false,
+                    ));
+                }
+                shot.shot_description = normalize_required(
+                    &format!("{shot_prefix}.shotDescription"),
+                    std::mem::take(&mut shot.shot_description),
+                    MAX_TEXT_CHARS,
+                )?;
+                if !(1..=3).contains(&shot.images.len()) {
+                    return Err(HostError::new(
+                        "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_IMAGES_INVALID",
+                        "each production result confirmation shot requires 1..=3 images",
+                        false,
+                    ));
+                }
+                for (image_index, image) in shot.images.iter_mut().enumerate() {
+                    normalize_production_result_confirmation_asset_reference(
+                        &format!("{shot_prefix}.images[{image_index}]"),
+                        image,
+                        &mut reference_keys,
+                    )?;
+                    image_count += 1;
+                }
+            }
+        }
+    }
+    if storyboard_count != 4
+        || shot_count != 54
+        || image_count > MAX_PRODUCTION_RESULT_CONFIRMATION_IMAGES
+    {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_SCRIPT_INVALID",
+            "production result confirmation requires four storyboards, 54 shots and at most 256 images",
+            false,
+        ));
+    }
+    Ok(data)
+}
+
+fn normalize_production_result_confirmation_asset_reference(
+    field: &str,
+    reference: &mut BusinessProductionResultConfirmationAssetReference,
+    keys: &mut HashSet<(String, String, String)>,
+) -> Result<(), HostError> {
+    reference.asset_id = normalize_uuid(
+        &format!("{field}.assetId"),
+        std::mem::take(&mut reference.asset_id),
+    )?;
+    reference.sha256 = normalize_sha256(
+        &format!("{field}.sha256"),
+        std::mem::take(&mut reference.sha256),
+    )?;
+    reference.group_key = normalize_required(
+        &format!("{field}.groupKey"),
+        std::mem::take(&mut reference.group_key),
+        MAX_SHORT_CHARS,
+    )?;
+    reference.file_name = normalize_required(
+        &format!("{field}.fileName"),
+        std::mem::take(&mut reference.file_name),
+        MAX_SHORT_CHARS,
+    )?;
+    reference.caption = normalize_text(
+        &format!("{field}.caption"),
+        std::mem::take(&mut reference.caption),
+        MAX_SHORT_CHARS,
+    )?;
+    if !keys.insert((
+        reference.asset_id.clone(),
+        reference.sha256.to_ascii_uppercase(),
+        reference.group_key.clone(),
+    )) {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIAL_DUPLICATE",
+            "production result confirmation references the same bound material more than once",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_contract_settlement_data(
+    mut data: BusinessContractSettlementData,
+) -> Result<BusinessContractSettlementData, HostError> {
+    data.contract_title = normalize_required(
+        "contractSettlement.contractTitle",
+        data.contract_title,
+        MAX_SHORT_CHARS,
+    )?;
+    data.contract_number = normalize_required(
+        "contractSettlement.contractNumber",
+        data.contract_number,
+        MAX_SHORT_CHARS,
+    )?;
+    if !(1..=MAX_MONEY_CENTS).contains(&data.original_contract_amount_cents)
+        || !(-MAX_MONEY_CENTS..=MAX_MONEY_CENTS).contains(&data.contract_adjustment_cents)
+        || !(1..=MAX_MONEY_CENTS).contains(&data.final_settlement_amount_cents)
+    {
+        return Err(HostError::new(
+            "BUSINESS_CONTRACT_SETTLEMENT_AMOUNT_INVALID",
+            "contract settlement amounts are outside the supported range",
+            false,
+        ));
+    }
+    let calculated_final = data
+        .original_contract_amount_cents
+        .checked_add(data.contract_adjustment_cents)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_CONTRACT_SETTLEMENT_AMOUNT_INVALID",
+                "contract settlement amount calculation overflowed",
+                false,
+            )
+        })?;
+    if calculated_final != data.final_settlement_amount_cents {
+        return Err(HostError::new(
+            "BUSINESS_CONTRACT_SETTLEMENT_TOTAL_MISMATCH",
+            "finalSettlementAmountCents must equal originalContractAmountCents plus contractAdjustmentCents",
+            false,
+        ));
+    }
+    if data.final_settlement_amount_cents % 100 != 0 {
+        return Err(HostError::new(
+            "BUSINESS_CONTRACT_SETTLEMENT_FRACTIONAL_CNY_UNCONFIRMED",
+            "contract settlement template currently requires a whole-yuan final amount",
+            false,
+        ));
+    }
+    if data.retention_rate_bps.is_some_and(|value| value > 10_000) {
+        return Err(HostError::new(
+            "BUSINESS_CONTRACT_SETTLEMENT_RETENTION_INVALID",
+            "retentionRateBps must be in 0..=10000",
+            false,
+        ));
+    }
+    if data.retention_rate_bps == Some(0) {
+        data.retention_rate_bps = None;
+    }
+    Ok(data)
+}
+
+fn normalize_service_settlement_item(
+    index: usize,
+    mut item: BusinessServiceSettlementItemData,
+) -> Result<BusinessServiceSettlementItemData, HostError> {
+    if index >= 3 {
+        return Err(HostError::new(
+            "BUSINESS_SERVICE_SETTLEMENT_PAGINATION_REQUIRED",
+            "service settlement template currently supports at most three verified rows",
+            false,
+        ));
+    }
+    item.service_name = normalize_required(
+        &format!("serviceSettlementItems[{index}].serviceName"),
+        item.service_name,
+        MAX_SHORT_CHARS,
+    )?;
+    item.period = normalize_required(
+        &format!("serviceSettlementItems[{index}].period"),
+        item.period,
+        MAX_SHORT_CHARS,
+    )?;
+    item.description = normalize_required(
+        &format!("serviceSettlementItems[{index}].description"),
+        item.description,
+        MAX_TEXT_CHARS,
+    )?;
+    item.evidence_label = normalize_required(
+        &format!("serviceSettlementItems[{index}].evidenceLabel"),
+        item.evidence_label,
+        MAX_SHORT_CHARS,
+    )?;
+    item.remarks = normalize_text(
+        &format!("serviceSettlementItems[{index}].remarks"),
+        item.remarks,
+        MAX_SHORT_CHARS,
+    )?;
+    Ok(item)
+}
+
+fn normalize_payment_application_input(
+    mut data: BusinessPaymentApplicationInput,
+) -> Result<BusinessPaymentApplicationInput, HostError> {
+    data.payment_id = normalize_uuid("paymentApplication.paymentId", data.payment_id)?;
+    data.contract_title = normalize_required(
+        "paymentApplication.contractTitle",
+        data.contract_title,
+        MAX_SHORT_CHARS,
+    )?;
+    data.contract_number = normalize_required(
+        "paymentApplication.contractNumber",
+        data.contract_number,
+        MAX_SHORT_CHARS,
+    )?;
+    data.work_summary = normalize_required(
+        "paymentApplication.workSummary",
+        data.work_summary,
+        MAX_TEXT_CHARS,
+    )?;
+    for (field, value) in [
+        (
+            "paymentApplication.paymentPeriodStart",
+            &mut data.payment_period_start,
+        ),
+        (
+            "paymentApplication.paymentPeriodEnd",
+            &mut data.payment_period_end,
+        ),
+        (
+            "paymentApplication.applicationDate",
+            &mut data.application_date,
+        ),
+    ] {
+        *value = normalize_required(field, std::mem::take(value), 10)?;
+        validate_iso_date(field, value)?;
+    }
+    data.settlement_period = normalize_required(
+        "paymentApplication.settlementPeriod",
+        data.settlement_period,
+        MAX_SHORT_CHARS,
+    )?;
+    data.supplier_bank_routing_number = normalize_required(
+        "paymentApplication.supplierBankRoutingNumber",
+        data.supplier_bank_routing_number,
+        MAX_SHORT_CHARS,
+    )?;
+    if !data
+        .supplier_bank_routing_number
+        .chars()
+        .all(|character| character.is_ascii_digit() || matches!(character, ' ' | '-'))
+    {
+        return Err(HostError::validation(
+            "supplierBankRoutingNumber may contain only digits, spaces or hyphens",
+        ));
+    }
+    if data.payment_sequence == 0 {
+        return Err(HostError::validation(
+            "paymentApplication.paymentSequence must be positive",
+        ));
+    }
+    for amount in [
+        data.invoice_amount_cents,
+        data.cumulative_recognized_amount_cents,
+        data.withheld_amount_cents,
+    ] {
+        if !(0..=MAX_MONEY_CENTS).contains(&amount) {
+            return Err(HostError::validation(
+                "payment application amounts are outside the supported range",
+            ));
+        }
+    }
+    if data.settlement_items.is_empty() || data.settlement_items.len() > 32 {
+        return Err(HostError::validation(
+            "paymentApplication.settlementItems requires 1..=32 rows",
+        ));
+    }
+    data.settlement_items = data
+        .settlement_items
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut item)| {
+            item.name = normalize_required(
+                &format!("paymentApplication.settlementItems[{index}].name"),
+                item.name,
+                MAX_SHORT_CHARS,
+            )?;
+            item.unit = normalize_required(
+                &format!("paymentApplication.settlementItems[{index}].unit"),
+                item.unit,
+                MAX_SHORT_CHARS,
+            )?;
+            item.remarks = normalize_text(
+                &format!("paymentApplication.settlementItems[{index}].remarks"),
+                item.remarks,
+                MAX_SHORT_CHARS,
+            )?;
+            if !(0..=MAX_MONEY_CENTS).contains(&item.contract_unit_price_cents)
+                || !(0..=MAX_QUANTITY_MILLIS).contains(&item.original_quantity_millis)
+                || !(0..=MAX_QUANTITY_MILLIS).contains(&item.settlement_quantity_millis)
+            {
+                return Err(HostError::validation(
+                    "payment settlement item values are outside the supported range",
+                ));
+            }
+            payment_settlement_item_amount(&item, false)?;
+            payment_settlement_item_amount(&item, true)?;
+            Ok(item)
+        })
+        .collect::<Result<Vec<_>, HostError>>()?;
+    Ok(data)
+}
+
+fn validate_iso_date(field: &str, value: &str) -> Result<(), HostError> {
+    let bytes = value.as_bytes();
+    let valid_shape = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit());
+    if !valid_shape {
+        return Err(HostError::validation(format!(
+            "{field} must use YYYY-MM-DD"
+        )));
+    }
+    let month = value[5..7].parse::<u32>().ok();
+    let day = value[8..10].parse::<u32>().ok();
+    if !month.is_some_and(|value| (1..=12).contains(&value))
+        || !day.is_some_and(|value| (1..=31).contains(&value))
+    {
+        return Err(HostError::validation(format!(
+            "{field} must use YYYY-MM-DD"
+        )));
+    }
+    Ok(())
+}
+
+fn payment_settlement_item_amount(
+    item: &BusinessPaymentSettlementItemData,
+    settlement: bool,
+) -> Result<i64, HostError> {
+    let quantity = if settlement {
+        item.settlement_quantity_millis
+    } else {
+        item.original_quantity_millis
+    };
+    let product = i128::from(item.contract_unit_price_cents)
+        .checked_mul(i128::from(quantity))
+        .ok_or_else(|| HostError::validation("payment settlement line amount overflowed"))?;
+    if product % 1_000 != 0 {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_LINE_AMOUNT_FRACTIONAL_CENT",
+            "unit price multiplied by quantity must resolve to whole cents",
+            false,
+        ));
+    }
+    let amount = i64::try_from(product / 1_000)
+        .map_err(|_| HostError::validation("payment settlement line amount overflowed"))?;
+    if amount > MAX_MONEY_CENTS {
+        return Err(HostError::validation(
+            "payment settlement line amount is outside the supported range",
+        ));
+    }
+    Ok(amount)
+}
+
+fn normalize_upsert_acceptance_material_payload(
+    mut payload: UpsertBusinessAcceptanceMaterialPayload,
+) -> Result<UpsertBusinessAcceptanceMaterialPayload, HostError> {
+    payload.workspace_id = normalize_uuid("workspaceId", payload.workspace_id)?;
+    payload.batch_id = normalize_uuid("acceptanceBatchId", payload.batch_id)?;
+    payload.material.id = payload
+        .material
+        .id
+        .map(|value| normalize_uuid("acceptance material id", value))
+        .transpose()?;
+    payload.material.requirement_id =
+        normalize_uuid("acceptance requirement id", payload.material.requirement_id)?;
+    payload.material.asset_id =
+        normalize_uuid("acceptance material assetId", payload.material.asset_id)?;
+    payload.material.group_key = normalize_required(
+        "acceptance material groupKey",
+        payload.material.group_key,
+        MAX_SHORT_CHARS,
+    )?;
+    payload.material.duplicate_of_material_id = payload
+        .material
+        .duplicate_of_material_id
+        .map(|value| normalize_uuid("duplicateOfMaterialId", value))
+        .transpose()?;
+    payload.material.notes = normalize_text(
+        "acceptance material notes",
+        payload.material.notes,
+        MAX_TEXT_CHARS,
+    )?;
+    Ok(payload)
 }
 
 fn normalize_evidence_input(
@@ -2357,6 +4097,34 @@ fn execute_transactional_command(
             )?,
             BusinessWorkspaceEventType::DocumentCreated,
         ),
+        NormalizedCommand::CreateAcceptanceBatch { payload, .. } => (
+            create_acceptance_batch(
+                &transaction,
+                vault_root,
+                payload,
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context.project_id,
+            )?,
+            BusinessWorkspaceEventType::AcceptanceBatchCreated,
+        ),
+        NormalizedCommand::PrepareAcceptanceDocuments { payload, .. } => (
+            prepare_acceptance_documents(
+                &transaction,
+                payload,
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context.project_id,
+            )?,
+            BusinessWorkspaceEventType::AcceptanceDocumentsPrepared,
+        ),
+        NormalizedCommand::UpsertAcceptanceMaterial { payload, .. } => (
+            upsert_acceptance_material(
+                &transaction,
+                payload,
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context.project_id,
+            )?,
+            BusinessWorkspaceEventType::AcceptanceMaterialUpserted,
+        ),
         NormalizedCommand::PromoteReviewedContract { payload, .. } => (
             promote_reviewed_contract(
                 &transaction,
@@ -2385,6 +4153,24 @@ fn execute_transactional_command(
                 &meta.context.project_id,
             )?,
             BusinessWorkspaceEventType::PaymentUpserted,
+        ),
+        NormalizedCommand::UpsertSettlementBatch { payload, .. } => (
+            upsert_settlement_batch(
+                &transaction,
+                payload,
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context.project_id,
+            )?,
+            BusinessWorkspaceEventType::SettlementBatchUpserted,
+        ),
+        NormalizedCommand::VoidSettlementBatch { payload, .. } => (
+            void_settlement_batch(
+                &transaction,
+                payload,
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context,
+            )?,
+            BusinessWorkspaceEventType::SettlementBatchVoided,
         ),
         NormalizedCommand::ConfirmQuote { payload, .. } => (
             confirm_quote(
@@ -2595,6 +4381,39 @@ fn execute_transactional_command(
         NormalizedCommand::CreateArchiveSnapshot { .. } => {
             unreachable!("archive snapshot dispatcher handled separately")
         }
+        NormalizedCommand::NormalizeLegacyTemplate { .. } => {
+            unreachable!("legacy template normalization dispatcher handled separately")
+        }
+        NormalizedCommand::ApproveTemplateVersion { payload, .. } => (
+            review_template_version(
+                &transaction,
+                vault_root,
+                TemplateVersionReview {
+                    workspace_id: payload.workspace_id.as_str(),
+                    template_version_id: payload.template_version_id.as_str(),
+                    target: BusinessTemplateVersionStatus::Approved,
+                    note: payload.note.as_str(),
+                },
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context,
+            )?,
+            BusinessWorkspaceEventType::TemplateVersionApproved,
+        ),
+        NormalizedCommand::RejectTemplateVersion { payload, .. } => (
+            review_template_version(
+                &transaction,
+                vault_root,
+                TemplateVersionReview {
+                    workspace_id: payload.workspace_id.as_str(),
+                    template_version_id: payload.template_version_id.as_str(),
+                    target: BusinessTemplateVersionStatus::Rejected,
+                    note: payload.note.as_str(),
+                },
+                meta.expected_revision.expect("normalized revision"),
+                &meta.context,
+            )?,
+            BusinessWorkspaceEventType::TemplateVersionRejected,
+        ),
         NormalizedCommand::ChangeStatus { payload, .. } => (
             change_workspace_status(
                 &transaction,
@@ -2625,6 +4444,488 @@ fn execute_transactional_command(
     )
 }
 
+fn execute_normalize_legacy_template(
+    connection: &mut Connection,
+    vault_root: &Path,
+    command: NormalizedCommand,
+    fingerprint: String,
+) -> Result<BusinessWorkspaceCommandOutcome, HostError> {
+    let NormalizedCommand::NormalizeLegacyTemplate { meta, payload } = command else {
+        unreachable!("legacy template dispatcher received another command")
+    };
+
+    {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_error)?;
+        if let Some(response) = find_existing_receipt(
+            &transaction,
+            &meta.command_id,
+            &meta.idempotency_key,
+            &fingerprint,
+        )? {
+            transaction.commit().map_err(sql_error)?;
+            return Ok(BusinessWorkspaceCommandOutcome {
+                response,
+                emitted_events: Vec::new(),
+                emitted_asset_events: Vec::new(),
+            });
+        }
+        validate_deadline(meta.deadline_at)?;
+        let workspace = load_workspace(&transaction, &payload.workspace_id)?;
+        ensure_workspace_mutable(
+            &workspace,
+            meta.expected_revision.expect("normalized revision"),
+            &meta.context.project_id,
+        )?;
+        ensure_template_version_absent(&transaction, &payload)?;
+        transaction.commit().map_err(sql_error)?;
+    }
+
+    let (source_asset, source_path) = asset_service::verify_ready_asset_integrity(
+        connection,
+        vault_root,
+        &payload.source_asset_id,
+    )?;
+    ensure_legacy_template_source_asset(
+        &source_asset,
+        &meta.context.project_id,
+        &payload.expected_source_sha256,
+    )?;
+
+    let template_version_id = Uuid::new_v4().to_string();
+    let staged = document_engine::stage_normalized_template(vault_root, &template_version_id)?;
+    let normalization = legacy_doc_normalizer::normalize_legacy_doc(
+        &source_path,
+        &payload.expected_source_sha256,
+        staged.path(),
+    )?;
+    let normalized_asset = asset_service::import_generated_artifact(
+        connection,
+        vault_root,
+        &meta.context.project_id,
+        staged.path(),
+        asset_service::GeneratedArtifactSource::NormalizedTemplate,
+        &meta.command_id,
+    )?;
+    if normalized_asset.sha256 != normalization.output_sha256
+        || normalized_asset.size_bytes != normalization.output_size_bytes as i64
+    {
+        let _ = cleanup_generated_asset(connection, vault_root, &normalized_asset.id);
+        return Err(HostError::new(
+            "BUSINESS_NORMALIZED_TEMPLATE_ASSET_MISMATCH",
+            "normalized template Asset does not match the audited DOCX output",
+            false,
+        ));
+    }
+
+    let final_result = (|| {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_error)?;
+        if let Some(response) = find_existing_receipt(
+            &transaction,
+            &meta.command_id,
+            &meta.idempotency_key,
+            &fingerprint,
+        )? {
+            transaction.commit().map_err(sql_error)?;
+            return Ok(BusinessWorkspaceCommandOutcome {
+                response,
+                emitted_events: Vec::new(),
+                emitted_asset_events: Vec::new(),
+            });
+        }
+        validate_deadline(meta.deadline_at)?;
+        let workspace = load_workspace(&transaction, &payload.workspace_id)?;
+        ensure_workspace_mutable(
+            &workspace,
+            meta.expected_revision.expect("normalized revision"),
+            &meta.context.project_id,
+        )?;
+        ensure_template_version_absent(&transaction, &payload)?;
+        let source_asset = asset_service::get_asset(&transaction, &payload.source_asset_id)?;
+        ensure_legacy_template_source_asset(
+            &source_asset,
+            &meta.context.project_id,
+            &payload.expected_source_sha256,
+        )?;
+        ensure_normalized_template_asset(
+            &normalized_asset,
+            &meta.context.project_id,
+            &normalization.output_sha256,
+        )?;
+        let count: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM business_template_versions WHERE workspace_id = ?1",
+                [&payload.workspace_id],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        if count >= MAX_TEMPLATE_VERSIONS_PER_WORKSPACE {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_VERSION_LIMIT_REACHED",
+                "business workspace template version limit reached",
+                false,
+            ));
+        }
+        let domain = TemplateVersion::new(
+            &template_version_id,
+            TemplateArtifact::new(&source_asset.id, &normalization.source_sha256)
+                .map_err(template_domain_error)?,
+            TemplateArtifact::new(&normalized_asset.id, &normalization.output_sha256)
+                .map_err(template_domain_error)?,
+            &payload.template_key,
+            &payload.mapping_version,
+            TemplateConverter::new(
+                &normalization.converter_engine,
+                &normalization.converter_version,
+                &normalization.converter_policy_version,
+            )
+            .map_err(template_domain_error)?,
+        )
+        .map_err(template_domain_error)?;
+        let now = now_millis();
+        transaction
+            .execute(
+                "INSERT INTO business_template_versions
+                 (id, workspace_id, source_asset_id, source_sha256,
+                  normalized_asset_id, normalized_sha256, template_key, mapping_version,
+                  converter_engine, converter_version, converter_policy_version,
+                  status, reviewed_by, reviewed_at, review_note, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                         'pendingReview', NULL, NULL, '', 1, ?12, ?12)",
+                params![
+                    domain.id(),
+                    payload.workspace_id,
+                    domain.source().asset_id(),
+                    domain.source().sha256(),
+                    domain.normalized().asset_id(),
+                    domain.normalized().sha256(),
+                    domain.template_key(),
+                    domain.mapping_version(),
+                    domain.converter().engine(),
+                    domain.converter().version(),
+                    domain.converter().policy(),
+                    now,
+                ],
+            )
+            .map_err(sql_error)?;
+        bump_workspace(
+            &transaction,
+            &payload.workspace_id,
+            meta.expected_revision.expect("normalized revision"),
+            now,
+        )?;
+        let workspace = load_workspace(&transaction, &payload.workspace_id)?;
+        let asset_event = asset_service::append_asset_event(
+            &transaction,
+            &normalized_asset,
+            &meta.context.trace_id,
+        )?;
+        let (response, event) = prepare_persist(
+            &transaction,
+            &meta,
+            "businessWorkspace.normalizeLegacyTemplate",
+            &fingerprint,
+            workspace,
+            BusinessWorkspaceEventType::TemplateVersionNormalized,
+        )?;
+        let commit_result = transaction.commit();
+        let mut outcome = complete_commit(
+            connection,
+            &meta,
+            &fingerprint,
+            commit_result,
+            response,
+            event,
+        )?;
+        if outcome
+            .response
+            .business_workspace
+            .template_versions
+            .iter()
+            .any(|version| version.normalized_asset_id == normalized_asset.id)
+        {
+            outcome.emitted_asset_events.push(asset_event);
+        }
+        Ok(outcome)
+    })();
+
+    let linked = final_result.as_ref().is_ok_and(|outcome| {
+        outcome
+            .response
+            .business_workspace
+            .template_versions
+            .iter()
+            .any(|version| version.normalized_asset_id == normalized_asset.id)
+    });
+    let outcome = if linked {
+        final_result
+    } else {
+        let cleanup_result = cleanup_generated_asset(connection, vault_root, &normalized_asset.id);
+        match (final_result, cleanup_result) {
+            (Err(error), _) => Err(error),
+            (Ok(outcome), Ok(())) => Ok(outcome),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    };
+    drop(staged);
+    outcome
+}
+
+fn ensure_template_version_absent(
+    connection: &Connection,
+    payload: &NormalizeBusinessLegacyTemplatePayload,
+) -> Result<(), HostError> {
+    let exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM business_template_versions
+                 WHERE workspace_id = ?1 AND source_asset_id = ?2 AND source_sha256 = ?3
+                   AND template_key = ?4 AND mapping_version = ?5
+             )",
+            params![
+                payload.workspace_id,
+                payload.source_asset_id,
+                payload.expected_source_sha256,
+                payload.template_key,
+                payload.mapping_version,
+            ],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)?;
+    if exists {
+        return Err(HostError::conflict(
+            "this legacy template source and mapping already have a version",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_legacy_template_source_asset(
+    asset: &crate::protocol::AssetRecord,
+    project_id: &str,
+    expected_sha256: &str,
+) -> Result<(), HostError> {
+    if asset.project_id.as_deref() != Some(project_id) {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_ASSET_PROJECT_MISMATCH",
+            "legacy template Asset belongs to a different project",
+            false,
+        ));
+    }
+    if asset.kind != crate::protocol::AssetKind::Document {
+        return Err(HostError::new(
+            "BUSINESS_LEGACY_DOC_SOURCE_INVALID",
+            "legacy template source must be a document Asset",
+            false,
+        ));
+    }
+    if !asset
+        .original_name
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("doc"))
+    {
+        return Err(HostError::new(
+            "BUSINESS_LEGACY_DOC_SOURCE_INVALID",
+            "legacy template source must use the .doc extension",
+            false,
+        ));
+    }
+    if !asset.sha256.eq_ignore_ascii_case(expected_sha256) {
+        return Err(HostError::new(
+            "BUSINESS_LEGACY_DOC_SOURCE_SHA_MISMATCH",
+            "legacy template source SHA-256 does not match the command",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_normalized_template_asset(
+    asset: &crate::protocol::AssetRecord,
+    project_id: &str,
+    expected_sha256: &str,
+) -> Result<(), HostError> {
+    if asset.project_id.as_deref() != Some(project_id)
+        || asset.kind != crate::protocol::AssetKind::Document
+        || !asset.sha256.eq_ignore_ascii_case(expected_sha256)
+        || !asset
+            .original_name
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("docx"))
+    {
+        return Err(HostError::new(
+            "BUSINESS_NORMALIZED_TEMPLATE_ASSET_MISMATCH",
+            "normalized template Asset metadata does not match the audited DOCX",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+struct TemplateVersionReview<'a> {
+    workspace_id: &'a str,
+    template_version_id: &'a str,
+    target: BusinessTemplateVersionStatus,
+    note: &'a str,
+}
+
+fn review_template_version(
+    transaction: &Transaction<'_>,
+    vault_root: &Path,
+    review: TemplateVersionReview<'_>,
+    expected_workspace_revision: i64,
+    context: &NormalizedContext,
+) -> Result<BusinessWorkspaceRecord, HostError> {
+    let TemplateVersionReview {
+        workspace_id,
+        template_version_id,
+        target,
+        note,
+    } = review;
+    let workspace = load_workspace(transaction, workspace_id)?;
+    ensure_workspace_mutable(&workspace, expected_workspace_revision, &context.project_id)?;
+    let record = transaction
+        .query_row(
+            "SELECT id, workspace_id, source_asset_id, source_sha256,
+                    normalized_asset_id, normalized_sha256, template_key, mapping_version,
+                    converter_engine, converter_version, converter_policy_version,
+                    status, reviewed_by, reviewed_at, review_note,
+                    revision, created_at, updated_at
+             FROM business_template_versions WHERE id = ?1 AND workspace_id = ?2",
+            params![template_version_id, workspace_id],
+            template_version_from_row,
+        )
+        .optional()
+        .map_err(sql_error)?
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_VERSION_NOT_FOUND",
+                "template version does not exist in this workspace",
+                false,
+            )
+        })?;
+    if record.status != BusinessTemplateVersionStatus::PendingReview || record.revision != 1 {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_VERSION_TERMINAL",
+            "reviewed template versions cannot transition again",
+            false,
+        ));
+    }
+    if document_engine::expected_template_mapping_version(&record.template_key)
+        != Some(record.mapping_version.as_str())
+    {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_MAPPING_VERSION_MISMATCH",
+            "template version mapping no longer matches the registered renderer",
+            false,
+        ));
+    }
+    let (source_asset, _) = asset_service::verify_ready_asset_integrity(
+        transaction,
+        vault_root,
+        &record.source_asset_id,
+    )?;
+    ensure_legacy_template_source_asset(&source_asset, &context.project_id, &record.source_sha256)?;
+    let (normalized_asset, normalized_bytes) = asset_service::read_verified_template_asset(
+        transaction,
+        vault_root,
+        &record.normalized_asset_id,
+    )?;
+    ensure_normalized_template_asset(
+        &normalized_asset,
+        &context.project_id,
+        &record.normalized_sha256,
+    )?;
+    let source = asset_service::get_asset_source(transaction, &record.normalized_asset_id)?;
+    if source.source != asset_service::AssetSourceKind::NormalizedTemplate {
+        return Err(HostError::new(
+            "BUSINESS_NORMALIZED_TEMPLATE_ASSET_MISMATCH",
+            "template version does not reference a normalizedTemplate Asset",
+            false,
+        ));
+    }
+    if target == BusinessTemplateVersionStatus::Approved {
+        document_engine::preflight_normalized_template(
+            &record.template_key,
+            &normalized_bytes,
+            &record.normalized_sha256,
+        )?;
+    }
+
+    let mut domain = TemplateVersion::new(
+        &record.id,
+        TemplateArtifact::new(&record.source_asset_id, &record.source_sha256)
+            .map_err(template_domain_error)?,
+        TemplateArtifact::new(&record.normalized_asset_id, &record.normalized_sha256)
+            .map_err(template_domain_error)?,
+        &record.template_key,
+        &record.mapping_version,
+        TemplateConverter::new(
+            &record.converter_engine,
+            &record.converter_version,
+            &record.converter_policy_version,
+        )
+        .map_err(template_domain_error)?,
+    )
+    .map_err(template_domain_error)?;
+    let reviewed_at = now_millis();
+    match target {
+        BusinessTemplateVersionStatus::Approved => domain
+            .approve(1, &context.actor_id, reviewed_at, note)
+            .map_err(template_domain_error)?,
+        BusinessTemplateVersionStatus::Rejected => domain
+            .reject(1, &context.actor_id, reviewed_at, note)
+            .map_err(template_domain_error)?,
+        BusinessTemplateVersionStatus::PendingReview => {
+            return Err(HostError::validation(
+                "template review target must be approved or rejected",
+            ));
+        }
+    }
+    debug_assert!(matches!(
+        domain.status(),
+        TemplateVersionStatus::Approved | TemplateVersionStatus::Rejected
+    ));
+    let changed = transaction
+        .execute(
+            "UPDATE business_template_versions
+             SET status = ?1, reviewed_by = ?2, reviewed_at = ?3, review_note = ?4,
+                 revision = revision + 1, updated_at = ?3
+             WHERE id = ?5 AND workspace_id = ?6 AND status = 'pendingReview' AND revision = 1",
+            params![
+                template_version_status_to_db(&target),
+                domain.decision().expect("review decision").actor(),
+                domain
+                    .decision()
+                    .expect("review decision")
+                    .timestamp_millis(),
+                domain.decision().expect("review decision").note(),
+                record.id,
+                workspace_id,
+            ],
+        )
+        .map_err(sql_error)?;
+    ensure_changed(changed)?;
+    bump_workspace(
+        transaction,
+        workspace_id,
+        expected_workspace_revision,
+        reviewed_at,
+    )?;
+    load_workspace(transaction, workspace_id)
+}
+
+fn template_domain_error(error: crate::business_v1::DomainError) -> HostError {
+    HostError::new(
+        "BUSINESS_TEMPLATE_VERSION_INVALID",
+        error.to_string(),
+        false,
+    )
+}
+
 fn execute_generate_document(
     connection: &mut Connection,
     vault_root: &Path,
@@ -2635,7 +4936,7 @@ fn execute_generate_document(
         unreachable!("generate dispatcher received another command")
     };
 
-    let document = {
+    let (workspace, document) = {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_error)?;
@@ -2671,19 +4972,56 @@ fn execute_generate_document(
                     false,
                 )
             })?;
+        ensure_acceptance_output_format(&workspace, &document, &payload.format)?;
         ensure_document_generatable(&document, &payload.format)?;
         ensure_document_prerequisites(&workspace, &document.kind)?;
+        if let Some(batch_id) = document.snapshot.acceptance_batch_id.as_deref() {
+            ensure_acceptance_ready(&workspace, batch_id)?;
+        }
         if document.kind == BusinessDocumentKind::Contract {
             ensure_current_quote_confirmed(&transaction, vault_root, &workspace)?;
         }
         ensure_positive_document_total(&document)?;
         ensure_payment_request_target(&workspace, &document)?;
+        ensure_payment_application_current(&workspace, &document)?;
         transaction.commit().map_err(sql_error)?;
-        document
+        (workspace, document)
     };
 
+    let template_source = load_generation_template_source(
+        connection,
+        vault_root,
+        &meta.context.project_id,
+        &payload.workspace_id,
+        &document,
+        &payload.format,
+    )?;
+    let video_completion_acceptance = load_video_completion_acceptance_generation_data(
+        connection,
+        vault_root,
+        &meta.context.project_id,
+        &workspace,
+        &document,
+    )?;
+    let production_result_confirmation = load_production_result_confirmation_generation_data(
+        connection,
+        vault_root,
+        &meta.context.project_id,
+        &workspace,
+        &document,
+    )?;
+    let resources = document_engine::DocumentGenerationResources {
+        video_completion_acceptance: video_completion_acceptance.as_ref(),
+        production_result_confirmation: production_result_confirmation.as_ref(),
+    };
     let generation_id = Uuid::new_v4().to_string();
-    let staged = document_engine::generate_document(vault_root, &document, &payload.format)?;
+    let staged = document_engine::generate_document_with_template_and_resources(
+        vault_root,
+        &document,
+        &payload.format,
+        template_source.as_deref(),
+        resources,
+    )?;
     let asset = asset_service::import_business_document(
         connection,
         vault_root,
@@ -2770,6 +5108,835 @@ fn execute_generate_document(
     };
     drop(staged);
     outcome
+}
+
+fn load_generation_template_source(
+    connection: &Connection,
+    vault_root: &Path,
+    project_id: &str,
+    workspace_id: &str,
+    document: &BusinessDocumentRecord,
+    format: &BusinessDocumentFormat,
+) -> Result<Option<Vec<u8>>, HostError> {
+    if !document_engine::template_requires_source_asset(&document.template_key) {
+        return Ok(None);
+    }
+    let template_asset_id = document
+        .snapshot
+        .template_asset_id
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "document snapshot is missing templateAssetId",
+                false,
+            )
+        })?;
+    let snapshot_sha256 = document
+        .snapshot
+        .template_source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "document snapshot is missing templateSourceSha256",
+                false,
+            )
+        })?;
+    let (asset, bytes) =
+        asset_service::read_verified_template_asset(connection, vault_root, template_asset_id)?;
+    if asset.project_id.as_deref() != Some(project_id) {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_ASSET_PROJECT_MISMATCH",
+            "template asset belongs to a different project",
+            false,
+        ));
+    }
+    if asset.kind != crate::protocol::AssetKind::Document {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_ASSET_KIND_INVALID",
+            "template asset must be a document",
+            false,
+        ));
+    }
+    if !asset.sha256.eq_ignore_ascii_case(snapshot_sha256) {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_ASSET_HASH_MISMATCH",
+            "template asset SHA-256 does not match the frozen document snapshot",
+            false,
+        ));
+    }
+    if document.template_key
+        == document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+    {
+        ensure_approved_template_binding(
+            connection,
+            workspace_id,
+            template_asset_id,
+            snapshot_sha256,
+            &document.template_key,
+            &document.snapshot.template_mapping_version,
+        )?;
+    }
+    if let Some(expected_sha256) =
+        document_engine::expected_template_source_sha256(&document.template_key)
+    {
+        if !snapshot_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_HASH_MISMATCH",
+                "frozen template SHA-256 does not match the registered template version",
+                false,
+            ));
+        }
+    }
+    let expected_extension = match format {
+        BusinessDocumentFormat::Docx => "docx",
+        BusinessDocumentFormat::Xlsx => "xlsx",
+    };
+    if !asset
+        .original_name
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case(expected_extension))
+    {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_ASSET_FORMAT_MISMATCH",
+            format!("template asset must use .{expected_extension}"),
+            false,
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+fn load_video_completion_acceptance_generation_data(
+    connection: &Connection,
+    vault_root: &Path,
+    project_id: &str,
+    workspace: &BusinessWorkspaceRecord,
+    document: &BusinessDocumentRecord,
+) -> Result<Option<VideoCompletionAcceptanceTemplateData>, HostError> {
+    if document.template_key != document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY {
+        return Ok(None);
+    }
+    let frozen = document
+        .snapshot
+        .video_completion_acceptance
+        .as_ref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_DATA_REQUIRED",
+                "video completion acceptance document snapshot is missing frozen data",
+                false,
+            )
+        })?;
+    if !frozen.manually_confirmed {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_CONFIRMATION_REQUIRED",
+            "video completion acceptance requires explicit manual confirmation before generation",
+            false,
+        ));
+    }
+    let batch_id = document
+        .snapshot
+        .acceptance_batch_id
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "video completion acceptance document is not linked to an acceptance batch",
+                false,
+            )
+        })?;
+    let output_spec_id = document
+        .snapshot
+        .acceptance_output_spec_id
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_NOT_FOUND",
+                "video completion acceptance document is not linked to an output spec",
+                false,
+            )
+        })?;
+    let batch = workspace
+        .acceptance_batches
+        .iter()
+        .find(|batch| batch.id == batch_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "video completion acceptance batch no longer exists",
+                false,
+            )
+        })?;
+    let output_spec = batch
+        .output_specs
+        .iter()
+        .find(|output_spec| output_spec.id == output_spec_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_NOT_FOUND",
+                "video completion acceptance output spec no longer exists",
+                false,
+            )
+        })?;
+    if output_spec.video_completion_acceptance.as_ref() != Some(frozen) {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_SNAPSHOT_STALE",
+            "video completion acceptance data changed after the document snapshot was frozen",
+            false,
+        ));
+    }
+    if document.snapshot.acceptance_batch_revision != Some(batch.revision) {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_SNAPSHOT_STALE",
+            "acceptance materials changed after the document snapshot was frozen",
+            false,
+        ));
+    }
+
+    let current_bindings = load_acceptance_material_bindings(connection, project_id, batch_id)?
+        .into_iter()
+        .filter(|binding| {
+            output_spec
+                .requirement_ids
+                .contains(&binding.requirement_id)
+        })
+        .collect::<Vec<_>>();
+    if current_bindings != document.snapshot.material_bindings {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_MATERIALS_CHANGED",
+            "current acceptance material bindings do not match the frozen document snapshot",
+            false,
+        ));
+    }
+    for binding in &current_bindings {
+        let requirement = batch
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == binding.requirement_id)
+            .ok_or_else(|| {
+                HostError::new(
+                    "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_REQUIREMENT_MISMATCH",
+                    "video completion acceptance material references a missing requirement",
+                    false,
+                )
+            })?;
+        if requirement.kind != binding.kind {
+            return Err(HostError::new(
+                "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_REQUIREMENT_MISMATCH",
+                "video completion acceptance material kind does not match its requirement",
+                false,
+            ));
+        }
+    }
+
+    let expected_keys = current_bindings
+        .iter()
+        .filter(|binding| {
+            matches!(
+                binding.kind,
+                BusinessAcceptanceMaterialKind::Video | BusinessAcceptanceMaterialKind::Screenshot
+            )
+        })
+        .map(video_completion_binding_key)
+        .collect::<HashSet<_>>();
+    if expected_keys.len()
+        != current_bindings
+            .iter()
+            .filter(|binding| {
+                matches!(
+                    binding.kind,
+                    BusinessAcceptanceMaterialKind::Video
+                        | BusinessAcceptanceMaterialKind::Screenshot
+                )
+            })
+            .count()
+    {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_MATERIAL_AMBIGUOUS",
+            "video completion acceptance material bindings contain duplicate asset/group entries",
+            false,
+        ));
+    }
+
+    let mut used_keys = HashSet::new();
+    let mut delivery_groups = Vec::with_capacity(frozen.delivery_groups.len());
+    for group in &frozen.delivery_groups {
+        let mut videos = Vec::with_capacity(group.videos.len());
+        for video in &group.videos {
+            let video_key = video_completion_reference_key(
+                &BusinessAcceptanceMaterialKind::Video,
+                &video.asset_reference.asset_id,
+                &video.asset_reference.sha256,
+                &group.group_key,
+            );
+            ensure_video_completion_binding(&expected_keys, &mut used_keys, video_key)?;
+            let (video_asset, _) = asset_service::verify_ready_asset_integrity(
+                connection,
+                vault_root,
+                &video.asset_reference.asset_id,
+            )?;
+            ensure_video_completion_asset(
+                &video_asset,
+                project_id,
+                &crate::protocol::AssetKind::Video,
+                &video.asset_reference.sha256,
+            )?;
+            if video_asset.original_name != video.asset_reference.file_name {
+                return Err(HostError::new(
+                    "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_FILE_NAME_MISMATCH",
+                    "video fileName does not match the authoritative Asset record",
+                    false,
+                ));
+            }
+
+            let mut screenshots = Vec::with_capacity(video.screenshots.len());
+            for screenshot in &video.screenshots {
+                let screenshot_key = video_completion_reference_key(
+                    &BusinessAcceptanceMaterialKind::Screenshot,
+                    &screenshot.asset_id,
+                    &screenshot.sha256,
+                    &group.group_key,
+                );
+                ensure_video_completion_binding(&expected_keys, &mut used_keys, screenshot_key)?;
+                let (asset, image_bytes) = asset_service::read_verified_asset_limited(
+                    connection,
+                    vault_root,
+                    &screenshot.asset_id,
+                    MAX_VIDEO_ACCEPTANCE_SCREENSHOT_BYTES,
+                )?;
+                ensure_video_completion_asset(
+                    &asset,
+                    project_id,
+                    &crate::protocol::AssetKind::Image,
+                    &screenshot.sha256,
+                )?;
+                let (width_px, height_px) =
+                    video_completion_image_dimensions(&asset.mime_type, &image_bytes)?;
+                screenshots.push(VideoScreenshot {
+                    asset_id: screenshot.asset_id.clone(),
+                    sha256: screenshot.sha256.clone(),
+                    caption: screenshot.caption.clone(),
+                    mime_type: asset.mime_type,
+                    image_bytes,
+                    width_px,
+                    height_px,
+                });
+            }
+            videos.push(VideoBlock {
+                title: video.title.clone(),
+                video_type: video.video_type.clone(),
+                content: video.content.clone(),
+                duration: video.duration.clone(),
+                asset_reference: VideoAssetReference {
+                    asset_id: video.asset_reference.asset_id.clone(),
+                    file_name: video.asset_reference.file_name.clone(),
+                    sha256: video.asset_reference.sha256.clone(),
+                    external_link: video.asset_reference.external_link.clone(),
+                },
+                screenshots,
+            });
+        }
+        delivery_groups.push(VideoDeliveryGroup {
+            name: group.name.clone(),
+            service_description: group.service_description.clone(),
+            videos,
+        });
+    }
+    if used_keys != expected_keys {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_MATERIAL_MISMATCH",
+            "frozen video completion acceptance data does not cover the current video and screenshot material bindings",
+            false,
+        ));
+    }
+
+    Ok(Some(VideoCompletionAcceptanceTemplateData {
+        contract_title: frozen.contract_title.clone(),
+        project_title: frozen.project_title.clone(),
+        completion_date: frozen.completion_date.clone(),
+        delivery_groups,
+        acceptance_conclusion: frozen.acceptance_conclusion.clone(),
+        manually_confirmed: frozen.manually_confirmed,
+    }))
+}
+
+fn load_production_result_confirmation_generation_data(
+    connection: &Connection,
+    vault_root: &Path,
+    project_id: &str,
+    workspace: &BusinessWorkspaceRecord,
+    document: &BusinessDocumentRecord,
+) -> Result<Option<ProductionResultConfirmationTemplateData>, HostError> {
+    if document.template_key != document_engine::BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY
+    {
+        return Ok(None);
+    }
+    let frozen = document
+        .snapshot
+        .production_result_confirmation
+        .as_ref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_DATA_REQUIRED",
+                "production result confirmation document snapshot is missing frozen data",
+                false,
+            )
+        })?;
+    if !frozen.manually_confirmed {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_CONFIRMATION_REQUIRED",
+            "production result confirmation requires explicit manual confirmation before generation",
+            false,
+        ));
+    }
+    if !frozen.clean_highlights_confirmed {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_HIGHLIGHT_CONFIRMATION_REQUIRED",
+            "production result confirmation requires explicit clean-highlights confirmation before generation",
+            false,
+        ));
+    }
+    let batch_id = document
+        .snapshot
+        .acceptance_batch_id
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "production result confirmation document is not linked to an acceptance batch",
+                false,
+            )
+        })?;
+    let output_spec_id = document
+        .snapshot
+        .acceptance_output_spec_id
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_NOT_FOUND",
+                "production result confirmation document is not linked to an output spec",
+                false,
+            )
+        })?;
+    let batch = workspace
+        .acceptance_batches
+        .iter()
+        .find(|batch| batch.id == batch_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "production result confirmation batch no longer exists",
+                false,
+            )
+        })?;
+    let output_spec = batch
+        .output_specs
+        .iter()
+        .find(|output_spec| output_spec.id == output_spec_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_NOT_FOUND",
+                "production result confirmation output spec no longer exists",
+                false,
+            )
+        })?;
+    if output_spec.production_result_confirmation.as_ref() != Some(frozen)
+        || document.snapshot.acceptance_batch_revision != Some(batch.revision)
+    {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_SNAPSHOT_STALE",
+            "production result confirmation data or acceptance revision changed after the document snapshot was frozen",
+            false,
+        ));
+    }
+
+    let current_bindings = load_acceptance_material_bindings(connection, project_id, batch_id)?
+        .into_iter()
+        .filter(|binding| {
+            output_spec
+                .requirement_ids
+                .contains(&binding.requirement_id)
+        })
+        .collect::<Vec<_>>();
+    if current_bindings != document.snapshot.material_bindings {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIALS_CHANGED",
+            "current acceptance material bindings do not match the frozen document snapshot",
+            false,
+        ));
+    }
+    for binding in &current_bindings {
+        let requirement = batch
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == binding.requirement_id)
+            .ok_or_else(|| {
+                HostError::new(
+                    "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_REQUIREMENT_MISMATCH",
+                    "production result confirmation material references a missing requirement",
+                    false,
+                )
+            })?;
+        if requirement.kind != binding.kind
+            || binding.kind != BusinessAcceptanceMaterialKind::Screenshot
+        {
+            return Err(HostError::new(
+                "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_REQUIREMENT_MISMATCH",
+                "production result confirmation requires image material bindings matching their requirements",
+                false,
+            ));
+        }
+    }
+    let expected_keys = current_bindings
+        .iter()
+        .map(production_result_confirmation_binding_key)
+        .collect::<HashSet<_>>();
+    if expected_keys.len() != current_bindings.len() {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIAL_MISMATCH",
+            "production result confirmation material bindings contain duplicates",
+            false,
+        ));
+    }
+
+    let mut used_keys = HashSet::new();
+    let mut delivery_items = Vec::with_capacity(frozen.delivery_items.len());
+    let mut storyboards = Vec::new();
+    for item in &frozen.delivery_items {
+        let images = item
+            .evidence_images
+            .iter()
+            .map(|reference| {
+                hydrate_production_result_confirmation_image(
+                    connection,
+                    vault_root,
+                    project_id,
+                    reference,
+                    &expected_keys,
+                    &mut used_keys,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        delivery_items.push(ProductionResultConfirmationDeliveryItem {
+            item_id: item.item_key.clone(),
+            name: item.title.clone(),
+            specification: item.deliverable_summary.clone(),
+            required_quantity: "1".to_string(),
+            unit: "项".to_string(),
+            received_quantity: "1".to_string(),
+            acceptance_note: item.deliverable_summary.clone(),
+            images,
+        });
+        for storyboard in &item.storyboards {
+            let shots = storyboard
+                .shots
+                .iter()
+                .map(|shot| {
+                    let images = shot
+                        .images
+                        .iter()
+                        .map(|reference| {
+                            hydrate_production_result_confirmation_image(
+                                connection,
+                                vault_root,
+                                project_id,
+                                reference,
+                                &expected_keys,
+                                &mut used_keys,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(ProductionResultConfirmationShot {
+                        shot_number: shot.shot_number.clone(),
+                        scene: storyboard.storyboard_number.clone(),
+                        description: shot.shot_description.clone(),
+                        on_screen_copy: String::new(),
+                        remarks: String::new(),
+                        source_highlighted: false,
+                        images,
+                    })
+                })
+                .collect::<Result<Vec<_>, HostError>>()?;
+            storyboards.push(ProductionResultConfirmationStoryboard {
+                title: storyboard.title.clone(),
+                specification: storyboard.description.clone(),
+                production_format: frozen.category.clone(),
+                duration: "详见分镜".to_string(),
+                shots,
+            });
+        }
+    }
+    if used_keys != expected_keys {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIAL_MISMATCH",
+            "frozen production result confirmation data does not cover the current image material bindings",
+            false,
+        ));
+    }
+    Ok(Some(ProductionResultConfirmationTemplateData {
+        attachment_label: frozen.attachment_label.clone(),
+        document_title: document.title.clone(),
+        category: frozen.category.clone(),
+        project_name: frozen.project_title.clone(),
+        contract_title: frozen.contract_title.clone(),
+        payment_amount_cents: frozen.payment_amount_cents,
+        contract_deliverable_summary: frozen.contract_deliverable_summary.clone(),
+        supplier_legal_name: frozen.supplier_legal_name.clone(),
+        procurement_period: frozen.procurement_period.clone(),
+        acceptance_description: frozen.acceptance_description.clone(),
+        penalty_or_additions: frozen.penalty_or_addition.clone(),
+        delivery_items,
+        execution_completed_date: frozen.completion_date.clone(),
+        acceptance_date: frozen.acceptance_date.clone(),
+        handler_signoff: String::new(),
+        professional_lead_signoff: String::new(),
+        other_department_signoff: String::new(),
+        supplier_handler_signoff: String::new(),
+        storyboards,
+        clean_highlights: Some(true),
+    }))
+}
+
+fn production_result_confirmation_binding_key(
+    binding: &BusinessAcceptanceMaterialBinding,
+) -> (String, String, String, String) {
+    production_result_confirmation_reference_key(
+        &binding.asset_id,
+        &binding.sha256,
+        &binding.group_key,
+    )
+}
+
+fn production_result_confirmation_reference_key(
+    asset_id: &str,
+    sha256: &str,
+    group_key: &str,
+) -> (String, String, String, String) {
+    (
+        acceptance_material_kind_to_db(&BusinessAcceptanceMaterialKind::Screenshot).to_string(),
+        asset_id.to_string(),
+        sha256.to_ascii_uppercase(),
+        group_key.to_string(),
+    )
+}
+
+fn hydrate_production_result_confirmation_image(
+    connection: &Connection,
+    vault_root: &Path,
+    project_id: &str,
+    reference: &BusinessProductionResultConfirmationAssetReference,
+    expected_keys: &HashSet<(String, String, String, String)>,
+    used_keys: &mut HashSet<(String, String, String, String)>,
+) -> Result<ProductionResultConfirmationImage, HostError> {
+    let key = production_result_confirmation_reference_key(
+        &reference.asset_id,
+        &reference.sha256,
+        &reference.group_key,
+    );
+    if !expected_keys.contains(&key) || !used_keys.insert(key) {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIAL_MISMATCH",
+            "production result confirmation assetId, sha256 or groupKey does not match an unused image material binding",
+            false,
+        ));
+    }
+    let (asset, image_bytes) = asset_service::read_verified_asset_limited(
+        connection,
+        vault_root,
+        &reference.asset_id,
+        MAX_PRODUCTION_RESULT_CONFIRMATION_IMAGE_BYTES,
+    )?;
+    if asset.project_id.as_deref() != Some(project_id)
+        || asset.kind != crate::protocol::AssetKind::Image
+        || !asset.sha256.eq_ignore_ascii_case(&reference.sha256)
+        || asset.original_name != reference.file_name
+    {
+        return Err(HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_ASSET_MISMATCH",
+            "production result confirmation image does not match its authoritative project Asset record",
+            false,
+        ));
+    }
+    let (width_px, height_px) = video_completion_image_dimensions(&asset.mime_type, &image_bytes)
+        .map_err(|_| {
+        HostError::new(
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_IMAGE_INVALID",
+            "production result confirmation images must be valid PNG or JPEG files",
+            false,
+        )
+    })?;
+    Ok(ProductionResultConfirmationImage {
+        asset_id: reference.asset_id.clone(),
+        sha256: reference.sha256.clone(),
+        mime_type: asset.mime_type,
+        width_px,
+        height_px,
+        alt_text: reference.caption.clone(),
+        image_bytes,
+    })
+}
+fn video_completion_binding_key(
+    binding: &BusinessAcceptanceMaterialBinding,
+) -> (String, String, String, String) {
+    video_completion_reference_key(
+        &binding.kind,
+        &binding.asset_id,
+        &binding.sha256,
+        &binding.group_key,
+    )
+}
+
+fn video_completion_reference_key(
+    kind: &BusinessAcceptanceMaterialKind,
+    asset_id: &str,
+    sha256: &str,
+    group_key: &str,
+) -> (String, String, String, String) {
+    (
+        acceptance_material_kind_to_db(kind).to_string(),
+        asset_id.to_string(),
+        sha256.to_ascii_uppercase(),
+        group_key.to_string(),
+    )
+}
+
+fn ensure_video_completion_binding(
+    expected_keys: &HashSet<(String, String, String, String)>,
+    used_keys: &mut HashSet<(String, String, String, String)>,
+    key: (String, String, String, String),
+) -> Result<(), HostError> {
+    if !expected_keys.contains(&key) {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_MATERIAL_MISMATCH",
+            "video completion acceptance assetId, sha256 or groupKey does not match the current batch material bindings",
+            false,
+        ));
+    }
+    if !used_keys.insert(key) {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_MATERIAL_DUPLICATE",
+            "video completion acceptance data references the same bound material more than once",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_video_completion_asset(
+    asset: &crate::protocol::AssetRecord,
+    project_id: &str,
+    expected_kind: &crate::protocol::AssetKind,
+    expected_sha256: &str,
+) -> Result<(), HostError> {
+    if asset.project_id.as_deref() != Some(project_id) {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_ASSET_PROJECT_MISMATCH",
+            "video completion acceptance asset belongs to a different project",
+            false,
+        ));
+    }
+    if &asset.kind != expected_kind {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_ASSET_KIND_INVALID",
+            "video completion acceptance asset kind does not match its declared role",
+            false,
+        ));
+    }
+    if !asset.sha256.eq_ignore_ascii_case(expected_sha256) {
+        return Err(HostError::new(
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_ASSET_HASH_MISMATCH",
+            "video completion acceptance asset SHA-256 does not match frozen data",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn video_completion_image_dimensions(
+    mime_type: &str,
+    bytes: &[u8],
+) -> Result<(u32, u32), HostError> {
+    match mime_type.trim().to_ascii_lowercase().as_str() {
+        "image/png" => {
+            if bytes.len() < 24 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                return Err(video_completion_image_error());
+            }
+            let width = u32::from_be_bytes(bytes[16..20].try_into().expect("PNG width slice"));
+            let height = u32::from_be_bytes(bytes[20..24].try_into().expect("PNG height slice"));
+            if width == 0 || height == 0 {
+                return Err(video_completion_image_error());
+            }
+            Ok((width, height))
+        }
+        "image/jpeg" => video_completion_jpeg_dimensions(bytes),
+        _ => Err(video_completion_image_error()),
+    }
+}
+
+fn video_completion_jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32), HostError> {
+    if bytes.len() < 4 || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Err(video_completion_image_error());
+    }
+    let mut cursor = 2_usize;
+    while cursor < bytes.len() {
+        while cursor < bytes.len() && bytes[cursor] == 0xff {
+            cursor += 1;
+        }
+        if cursor >= bytes.len() {
+            break;
+        }
+        let marker = bytes[cursor];
+        cursor += 1;
+        if marker == 0xd9 || marker == 0xda {
+            break;
+        }
+        if marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+        if cursor + 2 > bytes.len() {
+            return Err(video_completion_image_error());
+        }
+        let segment_length = u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]) as usize;
+        if segment_length < 2 || cursor + segment_length > bytes.len() {
+            return Err(video_completion_image_error());
+        }
+        if matches!(
+            marker,
+            0xc0 | 0xc1
+                | 0xc2
+                | 0xc3
+                | 0xc5
+                | 0xc6
+                | 0xc7
+                | 0xc9
+                | 0xca
+                | 0xcb
+                | 0xcd
+                | 0xce
+                | 0xcf
+        ) {
+            if segment_length < 7 {
+                return Err(video_completion_image_error());
+            }
+            let height = u16::from_be_bytes([bytes[cursor + 3], bytes[cursor + 4]]) as u32;
+            let width = u16::from_be_bytes([bytes[cursor + 5], bytes[cursor + 6]]) as u32;
+            if width == 0 || height == 0 {
+                return Err(video_completion_image_error());
+            }
+            return Ok((width, height));
+        }
+        cursor += segment_length;
+    }
+    Err(video_completion_image_error())
+}
+
+fn video_completion_image_error() -> HostError {
+    HostError::new(
+        "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_IMAGE_INVALID",
+        "video completion acceptance screenshots must be valid PNG or JPEG images",
+        false,
+    )
 }
 
 fn prepare_archive_snapshot_outside_transaction(
@@ -3204,7 +6371,7 @@ fn prepare_persist(
                 meta.protocol_version,
                 meta.deadline_at,
                 fingerprint,
-                serde_json::to_string(&response).map_err(json_error)?,
+                serialize_business_journal(&response)?,
                 completed_at,
             ],
         )
@@ -3283,10 +6450,13 @@ fn create_workspace(
         prefill_source_workspace_id: payload.prefill_source_workspace_id.clone(),
         profile,
         documents: Vec::new(),
+        acceptance_batches: Vec::new(),
+        template_versions: Vec::new(),
         payments: Vec::new(),
         quote_confirmations: Vec::new(),
         receipts: Vec::new(),
         milestones: Vec::new(),
+        settlement_batches: Vec::new(),
         delivery_submissions: Vec::new(),
         invoices: Vec::new(),
         archive_snapshots: Vec::new(),
@@ -3741,6 +6911,11 @@ fn normalize_profile(
             "defaultTaxRateBps must be in 0..10000",
         ));
     }
+    if !(0..=MAX_MONEY_CENTS).contains(&input.project_discount_cents) {
+        return Err(HostError::validation(
+            "projectDiscountCents is outside the supported range",
+        ));
+    }
     validate_timestamp("serviceStartAt", input.service_start_at)?;
     validate_timestamp("serviceEndAt", input.service_end_at)?;
     if input
@@ -3784,7 +6959,7 @@ fn normalize_profile(
         if !seen.insert(id.clone()) {
             return Err(HostError::validation("duplicate line item ID"));
         }
-        let normalized = normalize_line_item(id, item)?;
+        let normalized = normalize_line_item(id, item, input.tax_mode)?;
         total = total.checked_add(normalized.amount_cents).ok_or_else(|| {
             HostError::validation("line item amount total exceeds supported range")
         })?;
@@ -3795,6 +6970,12 @@ fn normalize_profile(
         }
         line_items.push(normalized);
     }
+    if input.project_discount_cents > total {
+        return Err(HostError::validation(
+            "projectDiscountCents must not exceed the original total",
+        ));
+    }
+    let quotation_totals = calculate_quotation_totals(&line_items, input.project_discount_cents)?;
     Ok(BusinessProfile {
         project_title: normalize_required("projectTitle", input.project_title, MAX_SHORT_CHARS)?,
         project_code: normalize_text("projectCode", input.project_code, MAX_SHORT_CHARS)?,
@@ -3846,6 +7027,9 @@ fn normalize_profile(
         )?,
         currency,
         default_tax_rate_bps: input.default_tax_rate_bps,
+        tax_mode: input.tax_mode,
+        project_discount_cents: input.project_discount_cents,
+        quotation_totals: Some(quotation_totals),
         service_start_at: input.service_start_at,
         service_end_at: input.service_end_at,
         delivery_summary: normalize_text(
@@ -3867,6 +7051,7 @@ fn normalize_profile(
 fn normalize_line_item(
     id: String,
     input: BusinessLineItemInput,
+    tax_mode: BusinessTaxMode,
 ) -> Result<BusinessLineItem, HostError> {
     if !(1..=MAX_QUANTITY_MILLIS).contains(&input.quantity_millis) {
         return Err(HostError::validation(format!(
@@ -3882,14 +7067,18 @@ fn normalize_line_item(
         return Err(HostError::validation("taxRateBps must be in 0..10000"));
     }
     let subtotal_numerator = i128::from(input.quantity_millis) * i128::from(input.unit_price_cents);
-    let tax_multiplier = 10_000_i128 + i128::from(input.tax_rate_bps);
-    let denominator = 1_000_i128 * 10_000_i128;
-    let taxed_numerator = subtotal_numerator
-        .checked_mul(tax_multiplier)
-        .ok_or_else(|| {
-            HostError::validation("computed line item amount exceeds the supported range")
-        })?;
-    let rounded = (taxed_numerator + denominator / 2) / denominator;
+    let (numerator, denominator) = match tax_mode {
+        BusinessTaxMode::TaxExclusive => (
+            subtotal_numerator
+                .checked_mul(10_000_i128 + i128::from(input.tax_rate_bps))
+                .ok_or_else(|| {
+                    HostError::validation("computed line item amount exceeds the supported range")
+                })?,
+            1_000_i128 * 10_000_i128,
+        ),
+        BusinessTaxMode::TaxInclusive => (subtotal_numerator, 1_000_i128),
+    };
+    let rounded = (numerator + denominator / 2) / denominator;
     if rounded > i128::from(MAX_MONEY_CENTS) {
         return Err(HostError::validation(
             "computed line item amount exceeds the supported range",
@@ -3905,6 +7094,92 @@ fn normalize_line_item(
         tax_rate_bps: input.tax_rate_bps,
         amount_cents: rounded as i64,
     })
+}
+
+fn calculate_quotation_totals(
+    items: &[BusinessLineItem],
+    project_discount_cents: i64,
+) -> Result<BusinessQuotationTotals, HostError> {
+    let original_total_cents = items.iter().try_fold(0_i64, |total, item| {
+        total
+            .checked_add(item.amount_cents)
+            .ok_or_else(|| HostError::validation("line item amount total exceeds supported range"))
+    })?;
+    if project_discount_cents > original_total_cents {
+        return Err(HostError::validation(
+            "projectDiscountCents must not exceed the original total",
+        ));
+    }
+
+    let allocations =
+        allocate_project_discount(items, project_discount_cents, original_total_cents)?;
+    let mut tax_cents = 0_i64;
+    for (item, discount) in items.iter().zip(allocations) {
+        let discounted_gross = item.amount_cents.checked_sub(discount).ok_or_else(|| {
+            HostError::validation("project discount allocation exceeds line total")
+        })?;
+        let denominator = 10_000_i128 + i128::from(item.tax_rate_bps);
+        let line_tax = (i128::from(discounted_gross) * i128::from(item.tax_rate_bps)
+            + denominator / 2)
+            / denominator;
+        let line_tax = i64::try_from(line_tax)
+            .map_err(|_| HostError::validation("computed tax exceeds supported range"))?;
+        tax_cents = tax_cents
+            .checked_add(line_tax)
+            .ok_or_else(|| HostError::validation("computed tax exceeds supported range"))?;
+    }
+    let final_total_cents = original_total_cents
+        .checked_sub(project_discount_cents)
+        .ok_or_else(|| HostError::validation("computed final total is invalid"))?;
+    let tax_exclusive_total_cents = final_total_cents
+        .checked_sub(tax_cents)
+        .ok_or_else(|| HostError::validation("computed tax-exclusive total is invalid"))?;
+    Ok(BusinessQuotationTotals {
+        original_total_cents,
+        project_discount_cents,
+        tax_exclusive_total_cents,
+        tax_cents,
+        final_total_cents,
+    })
+}
+
+fn allocate_project_discount(
+    items: &[BusinessLineItem],
+    discount_cents: i64,
+    original_total_cents: i64,
+) -> Result<Vec<i64>, HostError> {
+    if discount_cents == 0 {
+        return Ok(vec![0; items.len()]);
+    }
+    if original_total_cents <= 0 {
+        return Err(HostError::validation(
+            "projectDiscountCents requires a positive original total",
+        ));
+    }
+    let denominator = i128::from(original_total_cents);
+    let mut allocations = Vec::with_capacity(items.len());
+    let mut remainders = Vec::with_capacity(items.len());
+    let mut allocated = 0_i64;
+    for (index, item) in items.iter().enumerate() {
+        let numerator = i128::from(discount_cents) * i128::from(item.amount_cents);
+        let base = i64::try_from(numerator / denominator)
+            .map_err(|_| HostError::validation("project discount allocation overflow"))?;
+        allocations.push(base);
+        allocated = allocated
+            .checked_add(base)
+            .ok_or_else(|| HostError::validation("project discount allocation overflow"))?;
+        remainders.push((index, numerator % denominator));
+    }
+    remainders.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let remaining = discount_cents
+        .checked_sub(allocated)
+        .ok_or_else(|| HostError::validation("project discount allocation overflow"))?;
+    for (index, _) in remainders.into_iter().take(remaining as usize) {
+        allocations[index] = allocations[index]
+            .checked_add(1)
+            .ok_or_else(|| HostError::validation("project discount allocation overflow"))?;
+    }
+    Ok(allocations)
 }
 
 fn ensure_document_prerequisites(
@@ -4075,6 +7350,813 @@ fn ensure_payment_request_target(
         ))
     }
 }
+fn create_acceptance_batch(
+    transaction: &Transaction<'_>,
+    vault_root: &Path,
+    payload: &CreateBusinessAcceptanceBatchPayload,
+    expected_revision: i64,
+    project_id: &str,
+) -> Result<BusinessWorkspaceRecord, HostError> {
+    let workspace = load_workspace(transaction, &payload.workspace_id)?;
+    ensure_workspace_mutable(&workspace, expected_revision, project_id)?;
+    if workspace.acceptance_batches.len() as i64 >= MAX_ACCEPTANCE_BATCHES_PER_WORKSPACE {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_BATCH_LIMIT_REACHED",
+            "workspace acceptance batch limit has been reached",
+            false,
+        ));
+    }
+    for output in &payload.output_specs {
+        let Some(template_asset_id) = output.template_asset_id.as_deref() else {
+            continue;
+        };
+        let (asset, _) = asset_service::verify_ready_asset_integrity(
+            transaction,
+            vault_root,
+            template_asset_id,
+        )?;
+        if asset.project_id.as_deref() != Some(workspace.project_id.as_str()) {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_ASSET_PROJECT_MISMATCH",
+                "template asset belongs to a different project",
+                false,
+            ));
+        }
+        if asset.kind != crate::protocol::AssetKind::Document {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_ASSET_KIND_INVALID",
+                "template asset must be a document",
+                false,
+            ));
+        }
+        if !output
+            .template_source_sha256
+            .as_deref()
+            .is_some_and(|sha256| sha256.eq_ignore_ascii_case(&asset.sha256))
+        {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_ASSET_HASH_MISMATCH",
+                "template asset SHA-256 does not match templateSourceSha256",
+                false,
+            ));
+        }
+        let expected_extension = match output.format {
+            BusinessDocumentFormat::Docx => "docx",
+            BusinessDocumentFormat::Xlsx => "xlsx",
+        };
+        if !asset
+            .original_name
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case(expected_extension))
+        {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_ASSET_FORMAT_MISMATCH",
+                format!("template asset must use .{expected_extension}"),
+                false,
+            ));
+        }
+        if output.template_key
+            == document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+        {
+            ensure_approved_template_binding(
+                transaction,
+                &workspace.id,
+                template_asset_id,
+                output
+                    .template_source_sha256
+                    .as_deref()
+                    .expect("source-backed template SHA normalized"),
+                &output.template_key,
+                &output.template_mapping_version,
+            )?;
+        }
+    }
+    let requirements = payload
+        .requirements
+        .iter()
+        .map(|requirement| BusinessAcceptanceRequirementRecord {
+            id: requirement
+                .id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            label: requirement.label.clone(),
+            kind: requirement.kind.clone(),
+            required_group_count: requirement.required_group_count,
+        })
+        .collect::<Vec<_>>();
+    let output_specs = payload
+        .output_specs
+        .iter()
+        .map(|output| {
+            let payment_application = output
+                .payment_application
+                .as_ref()
+                .map(|data| freeze_payment_application_data(&workspace, data))
+                .transpose()?;
+            Ok(BusinessAcceptanceOutputSpecRecord {
+                id: output
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                output_code: output.output_code.clone(),
+                document_number: output.document_number.clone(),
+                title: output.title.clone(),
+                template_key: output.template_key.clone(),
+                template_asset_id: output.template_asset_id.clone(),
+                template_source_sha256: output.template_source_sha256.clone(),
+                template_mapping_version: output.template_mapping_version.clone(),
+                contract_settlement: output.contract_settlement.clone(),
+                service_settlement_items: output.service_settlement_items.clone(),
+                payment_application,
+                video_completion_acceptance: output.video_completion_acceptance.clone(),
+                production_result_confirmation: output.production_result_confirmation.clone(),
+                format: output.format.clone(),
+                requirement_ids: output.requirement_ids.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, HostError>>()?;
+    let now = now_millis();
+    transaction
+        .execute(
+            "INSERT INTO business_acceptance_batches
+             (id, workspace_id, label, requirements_json, output_specs_json,
+              revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+            params![
+                Uuid::new_v4().to_string(),
+                workspace.id,
+                payload.label,
+                serde_json::to_string(&requirements).map_err(json_error)?,
+                serde_json::to_string(&output_specs).map_err(json_error)?,
+                now,
+            ],
+        )
+        .map_err(sql_error)?;
+    bump_workspace(transaction, &workspace.id, expected_revision, now)?;
+    load_workspace(transaction, &workspace.id)
+}
+
+fn ensure_approved_template_binding(
+    connection: &Connection,
+    workspace_id: &str,
+    normalized_asset_id: &str,
+    normalized_sha256: &str,
+    template_key: &str,
+    mapping_version: &str,
+) -> Result<(), HostError> {
+    let source = asset_service::get_asset_source(connection, normalized_asset_id)?;
+    if source.source != asset_service::AssetSourceKind::NormalizedTemplate {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_VERSION_APPROVAL_REQUIRED",
+            "payment template must use a normalizedTemplate Asset",
+            false,
+        ));
+    }
+    let approved: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM business_template_versions
+                 WHERE workspace_id = ?1 AND normalized_asset_id = ?2
+                   AND normalized_sha256 = ?3 AND template_key = ?4
+                   AND mapping_version = ?5 AND status = 'approved'
+             )",
+            params![
+                workspace_id,
+                normalized_asset_id,
+                normalized_sha256,
+                template_key,
+                mapping_version,
+            ],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)?;
+    if !approved {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_VERSION_APPROVAL_REQUIRED",
+            "payment template must reference an approved normalized version",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn freeze_payment_application_data(
+    workspace: &BusinessWorkspaceRecord,
+    input: &BusinessPaymentApplicationInput,
+) -> Result<BusinessPaymentApplicationData, HostError> {
+    if workspace.profile.supplier_legal_name.trim().is_empty()
+        || workspace.profile.supplier_bank_name.trim().is_empty()
+        || workspace.profile.supplier_bank_account.trim().is_empty()
+    {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_BANK_ACCOUNT_REQUIRED",
+            "payment application requires confirmed supplier and bank account data",
+            false,
+        ));
+    }
+    let payment = workspace
+        .payments
+        .iter()
+        .find(|payment| payment.id == input.payment_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_PAYMENT_NOT_FOUND",
+                "payment application references a missing payment plan",
+                false,
+            )
+        })?;
+    if matches!(
+        payment.status,
+        BusinessPaymentStatus::Canceled | BusinessPaymentStatus::Received
+    ) {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_STATUS_INVALID",
+            "payment application requires an unsettled payment plan",
+            false,
+        ));
+    }
+    let settlement_total_cents = input
+        .settlement_items
+        .iter()
+        .try_fold(0_i64, |total, item| {
+            total
+                .checked_add(payment_settlement_item_amount(item, true)?)
+                .ok_or_else(|| HostError::validation("payment settlement total overflowed"))
+        })?;
+    if settlement_total_cents <= 0 || settlement_total_cents > MAX_MONEY_CENTS {
+        return Err(HostError::validation(
+            "payment settlement total is outside the supported range",
+        ));
+    }
+    let cumulative_paid_cents = workspace.financial_summary.received_cents;
+    let remaining_payable_cents = settlement_total_cents
+        .checked_sub(cumulative_paid_cents)
+        .ok_or_else(|| HostError::validation("remaining payable calculation overflowed"))?;
+    if remaining_payable_cents <= 0 {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_REMAINING_PAYABLE_INVALID",
+            "settlement total must exceed cumulative received funds",
+            false,
+        ));
+    }
+    let current_payment_received = receipt_net_for_payment(&workspace.receipts, &payment.id)?;
+    let payment_outstanding = payment
+        .amount_cents
+        .checked_sub(current_payment_received)
+        .ok_or_else(|| HostError::validation("payment outstanding calculation overflowed"))?;
+    if payment_outstanding != remaining_payable_cents {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_REMAINING_PAYABLE_MISMATCH",
+            "payment outstanding must equal settlement total minus cumulative paid",
+            false,
+        ));
+    }
+    let (has_invoice_records, recorded_invoice_cents) =
+        invoice_ledger_for_payment(workspace, &payment.id)?;
+    if has_invoice_records && recorded_invoice_cents != input.invoice_amount_cents {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_INVOICE_AMOUNT_MISMATCH",
+            "payment application invoice amount does not match the invoice ledger",
+            false,
+        ));
+    }
+    Ok(BusinessPaymentApplicationData {
+        payment_id: input.payment_id.clone(),
+        contract_title: input.contract_title.clone(),
+        contract_number: input.contract_number.clone(),
+        work_summary: input.work_summary.clone(),
+        payment_period_start: input.payment_period_start.clone(),
+        payment_period_end: input.payment_period_end.clone(),
+        settlement_period: input.settlement_period.clone(),
+        payment_sequence: input.payment_sequence,
+        invoice_amount_cents: input.invoice_amount_cents,
+        cumulative_recognized_amount_cents: input.cumulative_recognized_amount_cents,
+        withheld_amount_cents: input.withheld_amount_cents,
+        cumulative_paid_cents,
+        settlement_total_cents,
+        remaining_payable_cents,
+        application_date: input.application_date.clone(),
+        bank_account_profile_version: payment_bank_account_profile_version(
+            &workspace.profile,
+            &input.supplier_bank_routing_number,
+        ),
+        supplier_bank_routing_number: input.supplier_bank_routing_number.clone(),
+        settlement_items: input.settlement_items.clone(),
+    })
+}
+
+fn payment_bank_account_profile_version(
+    profile: &BusinessProfile,
+    frozen_routing_number: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"bsaigc.payment-bank-account-profile.v1\0");
+    for value in [
+        profile.supplier_legal_name.as_str(),
+        profile.supplier_bank_name.as_str(),
+        profile.supplier_bank_account.as_str(),
+        frozen_routing_number,
+    ] {
+        let bytes = value.as_bytes();
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
+    }
+    format!("payment-bank-account-sha256:{:X}", digest.finalize())
+}
+
+fn invoice_ledger_for_payment(
+    workspace: &BusinessWorkspaceRecord,
+    payment_id: &str,
+) -> Result<(bool, i64), HostError> {
+    workspace
+        .invoices
+        .iter()
+        .filter(|invoice| invoice.payment_id.as_deref() == Some(payment_id))
+        .try_fold((false, 0_i64), |(_, total), invoice| {
+            let signed = match invoice.kind {
+                BusinessInvoiceKind::Issued => invoice.amount_cents,
+                BusinessInvoiceKind::Reversal => invoice
+                    .amount_cents
+                    .checked_neg()
+                    .ok_or_else(|| HostError::validation("invoice reversal amount overflowed"))?,
+            };
+            total
+                .checked_add(signed)
+                .map(|net| (true, net))
+                .ok_or_else(|| HostError::validation("invoice total overflowed"))
+        })
+}
+
+fn prepare_acceptance_documents(
+    transaction: &Transaction<'_>,
+    payload: &PrepareBusinessAcceptanceDocumentsPayload,
+    expected_revision: i64,
+    project_id: &str,
+) -> Result<BusinessWorkspaceRecord, HostError> {
+    let workspace = load_workspace(transaction, &payload.workspace_id)?;
+    ensure_workspace_mutable(&workspace, expected_revision, project_id)?;
+    ensure_document_prerequisites(&workspace, &BusinessDocumentKind::Acceptance)?;
+    let batch = workspace
+        .acceptance_batches
+        .iter()
+        .find(|batch| batch.id == payload.batch_id)
+        .cloned()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "acceptance batch does not exist in this workspace",
+                false,
+            )
+        })?;
+    let bindings =
+        load_acceptance_material_bindings(transaction, &workspace.project_id, &batch.id)?;
+    let missing_count = batch
+        .output_specs
+        .iter()
+        .filter(|spec| {
+            acceptance_document_for_spec(&workspace.documents, &batch.id, spec).is_none()
+        })
+        .count() as i64;
+    if workspace.documents.len() as i64 + missing_count > MAX_DOCUMENTS_PER_WORKSPACE {
+        return Err(HostError::new(
+            "BUSINESS_DOCUMENT_LIMIT_REACHED",
+            "workspace document limit has been reached",
+            false,
+        ));
+    }
+
+    let now = now_millis();
+    let mut sequence_number = workspace
+        .documents
+        .iter()
+        .filter(|document| document.kind == BusinessDocumentKind::Acceptance)
+        .map(|document| document.sequence_number)
+        .max()
+        .unwrap_or(0);
+    for spec in &batch.output_specs {
+        if let Some(document) = acceptance_document_for_spec(&workspace.documents, &batch.id, spec)
+        {
+            if matches!(
+                document.status,
+                BusinessDocumentStatus::Draft | BusinessDocumentStatus::InReview
+            ) {
+                let mut snapshot = document.snapshot.clone();
+                refresh_acceptance_snapshot(&mut snapshot, &workspace, &batch, spec, &bindings);
+                transaction
+                    .execute(
+                        "UPDATE business_documents
+                         SET acceptance_output_spec_id = ?1, snapshot_json = ?2,
+                             revision = revision + 1, updated_at = ?3
+                         WHERE id = ?4 AND workspace_id = ?5 AND revision = ?6
+                           AND status IN ('draft','inReview')",
+                        params![
+                            spec.id,
+                            serde_json::to_string(&snapshot).map_err(json_error)?,
+                            now,
+                            document.id,
+                            workspace.id,
+                            document.revision,
+                        ],
+                    )
+                    .map_err(map_document_insert_error)?;
+            }
+            continue;
+        }
+
+        sequence_number += 1;
+        let mut snapshot = BusinessDocumentSnapshot {
+            workspace_revision: workspace.revision,
+            acceptance_batch_id: Some(batch.id.clone()),
+            acceptance_output_spec_id: Some(spec.id.clone()),
+            acceptance_batch_revision: Some(batch.revision),
+            material_bindings: Vec::new(),
+            template_asset_id: spec.template_asset_id.clone(),
+            template_source_sha256: spec.template_source_sha256.clone(),
+            template_mapping_version: spec.template_mapping_version.clone(),
+            contract_settlement: spec.contract_settlement.clone(),
+            service_settlement_items: spec.service_settlement_items.clone(),
+            payment_application: spec.payment_application.clone(),
+            video_completion_acceptance: spec.video_completion_acceptance.clone(),
+            production_result_confirmation: spec.production_result_confirmation.clone(),
+            customer_id: workspace.customer_id.clone(),
+            customer: workspace.customer.clone(),
+            profile: workspace.profile.clone(),
+            payment: None,
+        };
+        refresh_acceptance_snapshot(&mut snapshot, &workspace, &batch, spec, &bindings);
+        transaction
+            .execute(
+                "INSERT INTO business_documents
+                 (id, workspace_id, kind, sequence_number, document_number, title,
+                  template_key, status, snapshot_json, output_asset_id, output_format,
+                  acceptance_batch_id, acceptance_output_spec_id, approved_at, approved_by,
+                  generated_at, revision, created_at, updated_at)
+                 VALUES (?1, ?2, 'acceptance', ?3, ?4, ?5, ?6, 'draft', ?7,
+                         NULL, NULL, ?8, ?9, NULL, NULL, NULL, 1, ?10, ?10)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    workspace.id,
+                    sequence_number,
+                    spec.document_number,
+                    spec.title,
+                    spec.template_key,
+                    serde_json::to_string(&snapshot).map_err(json_error)?,
+                    batch.id,
+                    spec.id,
+                    now,
+                ],
+            )
+            .map_err(map_document_insert_error)?;
+    }
+    bump_workspace(transaction, &workspace.id, expected_revision, now)?;
+    load_workspace(transaction, &workspace.id)
+}
+
+fn acceptance_document_for_spec<'a>(
+    documents: &'a [BusinessDocumentRecord],
+    batch_id: &str,
+    spec: &BusinessAcceptanceOutputSpecRecord,
+) -> Option<&'a BusinessDocumentRecord> {
+    documents.iter().find(|document| {
+        document.kind == BusinessDocumentKind::Acceptance
+            && document.snapshot.acceptance_batch_id.as_deref() == Some(batch_id)
+            && (document.snapshot.acceptance_output_spec_id.as_deref() == Some(spec.id.as_str())
+                || (document.document_number == spec.document_number
+                    && document.title == spec.title
+                    && document.template_key == spec.template_key))
+    })
+}
+
+fn refresh_acceptance_snapshot(
+    snapshot: &mut BusinessDocumentSnapshot,
+    workspace: &BusinessWorkspaceRecord,
+    batch: &BusinessAcceptanceBatchRecord,
+    spec: &BusinessAcceptanceOutputSpecRecord,
+    bindings: &[BusinessAcceptanceMaterialBinding],
+) {
+    snapshot.acceptance_batch_id = Some(batch.id.clone());
+    snapshot.acceptance_output_spec_id = Some(spec.id.clone());
+    snapshot.acceptance_batch_revision = Some(batch.revision);
+    snapshot.template_asset_id = spec.template_asset_id.clone();
+    snapshot.template_source_sha256 = spec.template_source_sha256.clone();
+    snapshot.template_mapping_version = spec.template_mapping_version.clone();
+    snapshot.contract_settlement = spec.contract_settlement.clone();
+    snapshot.service_settlement_items = spec.service_settlement_items.clone();
+    snapshot.payment_application = spec.payment_application.clone();
+    snapshot.video_completion_acceptance = spec.video_completion_acceptance.clone();
+    snapshot.production_result_confirmation = spec.production_result_confirmation.clone();
+    snapshot.payment = spec.payment_application.as_ref().and_then(|data| {
+        workspace
+            .payments
+            .iter()
+            .find(|payment| payment.id == data.payment_id)
+            .cloned()
+    });
+    snapshot.material_bindings = bindings
+        .iter()
+        .filter(|binding| {
+            spec.requirement_ids.is_empty()
+                || spec.requirement_ids.contains(&binding.requirement_id)
+        })
+        .cloned()
+        .collect();
+}
+
+fn load_acceptance_material_bindings(
+    connection: &Connection,
+    project_id: &str,
+    batch_id: &str,
+) -> Result<Vec<BusinessAcceptanceMaterialBinding>, HostError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT material.requirement_id, material.asset_id, asset.sha256,
+                    material.group_key, material.kind
+             FROM business_acceptance_materials material
+             JOIN assets asset ON asset.id = material.asset_id
+             WHERE material.batch_id = ?1
+               AND material.confirmed = 1
+               AND material.duplicate_of_material_id IS NULL
+               AND asset.status = 'ready'
+               AND asset.project_id = ?2
+             ORDER BY material.requirement_id ASC, material.group_key ASC,
+                      material.asset_id ASC",
+        )
+        .map_err(sql_error)?;
+    let bindings = statement
+        .query_map(params![batch_id, project_id], |row| {
+            let kind: String = row.get(4)?;
+            Ok(BusinessAcceptanceMaterialBinding {
+                requirement_id: row.get(0)?,
+                asset_id: row.get(1)?,
+                sha256: row.get(2)?,
+                group_key: row.get(3)?,
+                kind: acceptance_material_kind_from_db(&kind)?,
+            })
+        })
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    Ok(bindings)
+}
+
+fn upsert_acceptance_material(
+    transaction: &Transaction<'_>,
+    payload: &UpsertBusinessAcceptanceMaterialPayload,
+    expected_revision: i64,
+    project_id: &str,
+) -> Result<BusinessWorkspaceRecord, HostError> {
+    let workspace = load_workspace(transaction, &payload.workspace_id)?;
+    ensure_workspace_mutable(&workspace, expected_revision, project_id)?;
+    let batch = workspace
+        .acceptance_batches
+        .iter()
+        .find(|batch| batch.id == payload.batch_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "acceptance batch does not exist in this workspace",
+                false,
+            )
+        })?;
+    let requirement = batch
+        .requirements
+        .iter()
+        .find(|requirement| requirement.id == payload.material.requirement_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_REQUIREMENT_NOT_FOUND",
+                "acceptance requirement does not exist in this batch",
+                false,
+            )
+        })?;
+    if requirement.kind != payload.material.kind {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_MATERIAL_KIND_MISMATCH",
+            "acceptance material kind must match its requirement",
+            false,
+        ));
+    }
+    let (asset_project_id, asset_status, asset_kind) = transaction
+        .query_row(
+            "SELECT project_id, status, kind FROM assets WHERE id = ?1",
+            [&payload.material.asset_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(sql_error)?
+        .ok_or_else(|| HostError::new("ASSET_NOT_FOUND", "acceptance asset is missing", false))?;
+    if asset_status != "ready" {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_ASSET_NOT_READY",
+            "acceptance material asset must be ready",
+            false,
+        ));
+    }
+    if asset_project_id.as_deref() != Some(workspace.project_id.as_str()) {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_ASSET_PROJECT_MISMATCH",
+            "acceptance material asset belongs to a different project",
+            false,
+        ));
+    }
+    if !acceptance_asset_kind_matches_requirement(&asset_kind, &requirement.kind) {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_ASSET_KIND_MISMATCH",
+            "acceptance asset kind is incompatible with its requirement",
+            false,
+        ));
+    }
+    let material_id = payload
+        .material
+        .id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    if payload.material.duplicate_of_material_id.as_deref() == Some(material_id.as_str()) {
+        return Err(HostError::validation(
+            "acceptance material cannot duplicate itself",
+        ));
+    }
+    if let Some(duplicate_id) = payload.material.duplicate_of_material_id.as_deref() {
+        let valid_duplicate = batch.materials.iter().any(|material| {
+            material.id == duplicate_id
+                && material.requirement_id == payload.material.requirement_id
+        });
+        if !valid_duplicate {
+            return Err(HostError::new(
+                "BUSINESS_ACCEPTANCE_DUPLICATE_TARGET_INVALID",
+                "duplicate material must reference the same batch requirement",
+                false,
+            ));
+        }
+    }
+    let existing = batch
+        .materials
+        .iter()
+        .find(|material| material.id == material_id);
+    if existing.is_none() && batch.materials.len() as i64 >= MAX_ACCEPTANCE_MATERIALS_PER_BATCH {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_MATERIAL_LIMIT_REACHED",
+            "acceptance material limit has been reached",
+            false,
+        ));
+    }
+    if existing.is_some_and(|material| material.batch_id != batch.id) {
+        return Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_MATERIAL_BATCH_MISMATCH",
+            "acceptance material belongs to a different batch",
+            false,
+        ));
+    }
+    let now = now_millis();
+    let changed = transaction
+        .execute(
+            "INSERT INTO business_acceptance_materials
+             (id, workspace_id, batch_id, requirement_id, asset_id, kind, group_key,
+              confirmed, duplicate_of_material_id, notes, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                 requirement_id = excluded.requirement_id,
+                 asset_id = excluded.asset_id,
+                 kind = excluded.kind,
+                 group_key = excluded.group_key,
+                 confirmed = excluded.confirmed,
+                 duplicate_of_material_id = excluded.duplicate_of_material_id,
+                 notes = excluded.notes,
+                 revision = business_acceptance_materials.revision + 1,
+                 updated_at = excluded.updated_at
+             WHERE business_acceptance_materials.workspace_id = excluded.workspace_id
+               AND business_acceptance_materials.batch_id = excluded.batch_id",
+            params![
+                material_id,
+                workspace.id,
+                batch.id,
+                payload.material.requirement_id,
+                payload.material.asset_id,
+                acceptance_material_kind_to_db(&payload.material.kind),
+                payload.material.group_key,
+                payload.material.confirmed,
+                payload.material.duplicate_of_material_id,
+                payload.material.notes,
+                now,
+            ],
+        )
+        .map_err(map_acceptance_material_write_error)?;
+    ensure_changed(changed)?;
+    transaction
+        .execute(
+            "UPDATE business_acceptance_batches
+             SET revision = revision + 1, updated_at = ?1
+             WHERE id = ?2 AND workspace_id = ?3",
+            params![now, batch.id, workspace.id],
+        )
+        .map_err(sql_error)?;
+    synchronize_acceptance_draft_snapshots(
+        transaction,
+        &workspace,
+        batch,
+        batch.revision + 1,
+        now,
+    )?;
+    bump_workspace(transaction, &workspace.id, expected_revision, now)?;
+    load_workspace(transaction, &workspace.id)
+}
+
+fn synchronize_acceptance_draft_snapshots(
+    transaction: &Transaction<'_>,
+    workspace: &BusinessWorkspaceRecord,
+    batch: &BusinessAcceptanceBatchRecord,
+    batch_revision: i64,
+    now: i64,
+) -> Result<(), HostError> {
+    let mut refreshed_batch = batch.clone();
+    refreshed_batch.revision = batch_revision;
+    let bindings =
+        load_acceptance_material_bindings(transaction, &workspace.project_id, &batch.id)?;
+    for document in workspace.documents.iter().filter(|document| {
+        document.snapshot.acceptance_batch_id.as_deref() == Some(batch.id.as_str())
+            && matches!(
+                document.status,
+                BusinessDocumentStatus::Draft | BusinessDocumentStatus::InReview
+            )
+    }) {
+        let Some(spec) = batch.output_specs.iter().find(|spec| {
+            document.snapshot.acceptance_output_spec_id.as_deref() == Some(spec.id.as_str())
+                || (document.document_number == spec.document_number
+                    && document.title == spec.title
+                    && document.template_key == spec.template_key)
+        }) else {
+            continue;
+        };
+        let mut snapshot = document.snapshot.clone();
+        refresh_acceptance_snapshot(&mut snapshot, workspace, &refreshed_batch, spec, &bindings);
+        let changed = transaction
+            .execute(
+                "UPDATE business_documents
+                 SET acceptance_output_spec_id = ?1, snapshot_json = ?2,
+                     revision = revision + 1, updated_at = ?3
+                 WHERE id = ?4 AND workspace_id = ?5 AND revision = ?6
+                   AND status IN ('draft','inReview')",
+                params![
+                    spec.id,
+                    serde_json::to_string(&snapshot).map_err(json_error)?,
+                    now,
+                    document.id,
+                    workspace.id,
+                    document.revision,
+                ],
+            )
+            .map_err(sql_error)?;
+        ensure_changed(changed)?;
+    }
+    Ok(())
+}
+
+fn ensure_acceptance_ready(
+    workspace: &BusinessWorkspaceRecord,
+    acceptance_batch_id: &str,
+) -> Result<(), HostError> {
+    let batch = workspace
+        .acceptance_batches
+        .iter()
+        .find(|batch| batch.id == acceptance_batch_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                "acceptance batch does not exist in this workspace",
+                false,
+            )
+        })?;
+    if batch.readiness.is_ready {
+        return Ok(());
+    }
+    let missing = batch
+        .readiness
+        .blockers
+        .iter()
+        .map(|blocker| {
+            format!(
+                "{}: required {}, provided {}, missing {}",
+                blocker.requirement_label,
+                blocker.required_group_count,
+                blocker.provided_group_count,
+                blocker.missing_group_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(HostError::new(
+        "BUSINESS_ACCEPTANCE_NOT_READY",
+        format!("acceptance batch is not ready for official documents: {missing}"),
+        false,
+    ))
+}
+
 fn create_document(
     transaction: &Transaction<'_>,
     vault_root: &Path,
@@ -4085,6 +8167,45 @@ fn create_document(
     let workspace = load_workspace(transaction, &payload.workspace_id)?;
     ensure_workspace_mutable(&workspace, expected_revision, project_id)?;
     ensure_document_prerequisites(&workspace, &payload.kind)?;
+    let acceptance_link = match (&payload.kind, payload.acceptance_batch_id.as_deref()) {
+        (BusinessDocumentKind::Acceptance, Some(batch_id)) => {
+            let batch = workspace
+                .acceptance_batches
+                .iter()
+                .find(|batch| batch.id == batch_id)
+                .ok_or_else(|| {
+                    HostError::new(
+                        "BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND",
+                        "acceptance batch does not exist in this workspace",
+                        false,
+                    )
+                })?;
+            let output_spec = batch.output_specs.iter().find(|spec| {
+                spec.document_number == payload.document_number
+                    && spec.title == payload.title
+                    && spec.template_key == payload.template_key
+            });
+            let Some(output_spec) = output_spec else {
+                return Err(HostError::new(
+                    "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_MISMATCH",
+                    "acceptance document must match a configured output spec",
+                    false,
+                ));
+            };
+            let bindings =
+                load_acceptance_material_bindings(transaction, &workspace.project_id, &batch.id)?;
+            Some((batch.clone(), output_spec.clone(), bindings))
+        }
+        (BusinessDocumentKind::Acceptance, None) => None,
+        (_, Some(_)) => {
+            return Err(HostError::new(
+                "BUSINESS_ACCEPTANCE_BATCH_NOT_ALLOWED",
+                "acceptanceBatchId is only valid for acceptance documents",
+                false,
+            ));
+        }
+        (_, None) => None,
+    };
     if payload.kind == BusinessDocumentKind::Contract {
         ensure_current_quote_confirmed(transaction, vault_root, &workspace)?;
     }
@@ -4134,6 +8255,28 @@ fn create_document(
         None => None,
     };
     let now = now_millis();
+    let mut snapshot = BusinessDocumentSnapshot {
+        workspace_revision: workspace.revision,
+        template_asset_id: None,
+        template_source_sha256: None,
+        template_mapping_version: String::new(),
+        contract_settlement: None,
+        service_settlement_items: Vec::new(),
+        payment_application: None,
+        video_completion_acceptance: None,
+        production_result_confirmation: None,
+        customer_id: workspace.customer_id.clone(),
+        customer: workspace.customer.clone(),
+        profile: workspace.profile.clone(),
+        payment,
+        acceptance_batch_id: payload.acceptance_batch_id.clone(),
+        acceptance_output_spec_id: None,
+        acceptance_batch_revision: None,
+        material_bindings: Vec::new(),
+    };
+    if let Some((batch, output_spec, bindings)) = &acceptance_link {
+        refresh_acceptance_snapshot(&mut snapshot, &workspace, batch, output_spec, bindings);
+    }
     let document = BusinessDocumentRecord {
         id: Uuid::new_v4().to_string(),
         kind: payload.kind.clone(),
@@ -4142,13 +8285,7 @@ fn create_document(
         title: payload.title.clone(),
         template_key: payload.template_key.clone(),
         status: BusinessDocumentStatus::Draft,
-        snapshot: BusinessDocumentSnapshot {
-            workspace_revision: workspace.revision,
-            customer_id: workspace.customer_id.clone(),
-            customer: workspace.customer.clone(),
-            profile: workspace.profile.clone(),
-            payment,
-        },
+        snapshot,
         output_asset_id: None,
         output_format: None,
         source_asset_id: None,
@@ -4171,9 +8308,10 @@ fn create_document(
             "INSERT INTO business_documents
              (id, workspace_id, kind, sequence_number, document_number, title,
               template_key, status, snapshot_json, output_asset_id, output_format,
-              approved_at, approved_by, generated_at, revision, created_at, updated_at)
+               acceptance_batch_id, acceptance_output_spec_id, approved_at, approved_by,
+               generated_at, revision, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'draft', ?8,
-                     NULL, NULL, NULL, NULL, NULL, 1, ?9, ?9)",
+                     NULL, NULL, ?9, ?10, NULL, NULL, NULL, 1, ?11, ?11)",
             params![
                 document.id,
                 workspace.id,
@@ -4183,6 +8321,8 @@ fn create_document(
                 document.title,
                 document.template_key,
                 serde_json::to_string(&document.snapshot).map_err(json_error)?,
+                payload.acceptance_batch_id,
+                acceptance_link.as_ref().map(|(_, spec, _)| &spec.id),
                 now,
             ],
         )
@@ -4217,8 +8357,6 @@ fn promote_reviewed_contract(
             false,
         ));
     }
-    ensure_document_prerequisites(&workspace, &BusinessDocumentKind::Contract)?;
-    ensure_current_quote_confirmed(transaction, vault_root, &workspace)?;
     if workspace.documents.len() as i64 >= MAX_DOCUMENTS_PER_WORKSPACE {
         return Err(HostError::new(
             "BUSINESS_DOCUMENT_LIMIT_REACHED",
@@ -4255,6 +8393,18 @@ fn promote_reviewed_contract(
         status: BusinessDocumentStatus::Effective,
         snapshot: BusinessDocumentSnapshot {
             workspace_revision: workspace.revision,
+            acceptance_batch_id: None,
+            acceptance_output_spec_id: None,
+            acceptance_batch_revision: None,
+            material_bindings: Vec::new(),
+            template_asset_id: None,
+            template_source_sha256: None,
+            template_mapping_version: String::new(),
+            contract_settlement: None,
+            service_settlement_items: Vec::new(),
+            payment_application: None,
+            video_completion_acceptance: None,
+            production_result_confirmation: None,
             customer_id: workspace.customer_id.clone(),
             customer: workspace.customer.clone(),
             profile: workspace.profile.clone(),
@@ -4341,6 +8491,12 @@ fn change_document_status(
             )
         })?;
     validate_document_transition(&document.kind, &document.status, &payload.status)?;
+    if matches!(
+        payload.status,
+        BusinessDocumentStatus::InReview | BusinessDocumentStatus::Approved
+    ) {
+        ensure_specialized_acceptance_snapshot_ready(document)?;
+    }
     if payload.status == BusinessDocumentStatus::Voided
         && document.kind == BusinessDocumentKind::Contract
         && document.status == BusinessDocumentStatus::Effective
@@ -4371,6 +8527,9 @@ fn change_document_status(
         BusinessDocumentStatus::Approved | BusinessDocumentStatus::Effective
     ) {
         ensure_document_prerequisites(&workspace, &document.kind)?;
+        if let Some(batch_id) = document.snapshot.acceptance_batch_id.as_deref() {
+            ensure_acceptance_ready(&workspace, batch_id)?;
+        }
         if document.kind == BusinessDocumentKind::Contract {
             ensure_current_quote_confirmed(transaction, vault_root, &workspace)?;
         }
@@ -4649,21 +8808,21 @@ fn ensure_document_generatable(
             false,
         ));
     }
+    ensure_specialized_acceptance_snapshot_ready(document)?;
     document_engine::validate_template(&document.kind, &document.template_key)?;
     let valid_format = matches!(
         (&document.kind, format),
         (BusinessDocumentKind::Quote, BusinessDocumentFormat::Xlsx)
             | (
-                BusinessDocumentKind::Contract
-                    | BusinessDocumentKind::PaymentRequest
-                    | BusinessDocumentKind::Acceptance,
+                BusinessDocumentKind::Contract | BusinessDocumentKind::PaymentRequest,
                 BusinessDocumentFormat::Docx
             )
+            | (BusinessDocumentKind::Acceptance, _)
     );
     if !valid_format {
         return Err(HostError::new(
             "BUSINESS_DOCUMENT_FORMAT_INVALID",
-            "quote documents require XLSX; all other business documents require DOCX",
+            "quote documents require XLSX; contract and payment request documents require DOCX",
             false,
         ));
     }
@@ -4678,6 +8837,299 @@ fn ensure_document_generatable(
         ));
     }
     Ok(())
+}
+
+fn ensure_specialized_acceptance_snapshot_ready(
+    document: &BusinessDocumentRecord,
+) -> Result<(), HostError> {
+    let expected_mapping_version =
+        document_engine::expected_template_mapping_version(&document.template_key);
+    if let Some(expected_mapping_version) = expected_mapping_version {
+        if document.snapshot.template_mapping_version != expected_mapping_version {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_MAPPING_VERSION_MISMATCH",
+                "document snapshot mapping version does not match the registered template renderer",
+                false,
+            ));
+        }
+    }
+    match document.template_key.as_str() {
+        document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY => {
+            if document.snapshot.video_completion_acceptance.is_none()
+                || document.snapshot.production_result_confirmation.is_some()
+                || document.snapshot.contract_settlement.is_some()
+                || !document.snapshot.service_settlement_items.is_empty()
+                || document.snapshot.payment_application.is_some()
+            {
+                return Err(HostError::new(
+                    "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_DATA_REQUIRED",
+                    "video completion acceptance snapshot requires frozen data and forbids settlement payloads",
+                    false,
+                ));
+            }
+        }
+        document_engine::BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY => {
+            let Some(data) = document.snapshot.production_result_confirmation.as_ref() else {
+                return Err(HostError::new(
+                    "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_DATA_REQUIRED",
+                    "production result confirmation snapshot requires frozen data",
+                    false,
+                ));
+            };
+            if !data.manually_confirmed
+                || !data.clean_highlights_confirmed
+                || document.snapshot.video_completion_acceptance.is_some()
+                || document.snapshot.contract_settlement.is_some()
+                || !document.snapshot.service_settlement_items.is_empty()
+                || document.snapshot.payment_application.is_some()
+            {
+                return Err(HostError::new(
+                    "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_DATA_REQUIRED",
+                    "production result confirmation snapshot requires both confirmations and forbids other specialized payloads",
+                    false,
+                ));
+            }
+        }
+        document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+            if document.snapshot.contract_settlement.is_none()
+                || !document.snapshot.service_settlement_items.is_empty()
+            {
+                return Err(HostError::new(
+                    "BUSINESS_CONTRACT_SETTLEMENT_DATA_REQUIRED",
+                    "contract settlement snapshot requires frozen settlement data",
+                    false,
+                ));
+            }
+        }
+        document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+            if document.snapshot.contract_settlement.is_some()
+                || document.snapshot.service_settlement_items.is_empty()
+            {
+                return Err(HostError::new(
+                    "BUSINESS_SERVICE_SETTLEMENT_DATA_REQUIRED",
+                    "service settlement snapshot requires frozen service rows",
+                    false,
+                ));
+            }
+            for (index, item) in document
+                .snapshot
+                .service_settlement_items
+                .iter()
+                .enumerate()
+            {
+                let Some(provided_as_required) = item.provided_as_required else {
+                    return Err(HostError::new(
+                        "BUSINESS_SERVICE_SETTLEMENT_CONFIRMATION_REQUIRED",
+                        format!(
+                            "service settlement row {} requires providedAsRequired confirmation",
+                            index + 1
+                        ),
+                        false,
+                    ));
+                };
+                if !provided_as_required && item.remarks.trim().is_empty() {
+                    return Err(HostError::new(
+                        "BUSINESS_SERVICE_SETTLEMENT_REMARKS_REQUIRED",
+                        format!(
+                            "service settlement row {} requires remarks when service was not provided as required",
+                            index + 1
+                        ),
+                        false,
+                    ));
+                }
+            }
+        }
+        document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY => {
+            let data = document
+                .snapshot
+                .payment_application
+                .as_ref()
+                .ok_or_else(|| {
+                    HostError::new(
+                        "BUSINESS_PAYMENT_APPLICATION_DATA_REQUIRED",
+                        "payment application snapshot is missing frozen payment data",
+                        false,
+                    )
+                })?;
+            if document.snapshot.contract_settlement.is_some()
+                || !document.snapshot.service_settlement_items.is_empty()
+                || document
+                    .snapshot
+                    .payment
+                    .as_ref()
+                    .is_none_or(|payment| payment.id != data.payment_id)
+                || data.bank_account_profile_version.trim().is_empty()
+            {
+                return Err(HostError::new(
+                    "BUSINESS_PAYMENT_APPLICATION_DATA_REQUIRED",
+                    "payment application snapshot has inconsistent frozen data",
+                    false,
+                ));
+            }
+            let settlement_total =
+                data.settlement_items
+                    .iter()
+                    .try_fold(0_i64, |total, item| {
+                        total
+                            .checked_add(payment_settlement_item_amount(item, true)?)
+                            .ok_or_else(|| {
+                                HostError::validation("payment settlement total overflowed")
+                            })
+                    })?;
+            let remaining = settlement_total
+                .checked_sub(data.cumulative_paid_cents)
+                .ok_or_else(|| HostError::validation("remaining payable overflowed"))?;
+            if settlement_total != data.settlement_total_cents
+                || remaining != data.remaining_payable_cents
+                || remaining <= 0
+            {
+                return Err(HostError::new(
+                    "BUSINESS_PAYMENT_REMAINING_PAYABLE_MISMATCH",
+                    "frozen remaining payable does not match settlement total minus cumulative paid",
+                    false,
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn ensure_payment_application_current(
+    workspace: &BusinessWorkspaceRecord,
+    document: &BusinessDocumentRecord,
+) -> Result<(), HostError> {
+    if document.template_key
+        != document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+    {
+        return Ok(());
+    }
+    let data = document
+        .snapshot
+        .payment_application
+        .as_ref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_PAYMENT_APPLICATION_DATA_REQUIRED",
+                "payment application snapshot is missing frozen data",
+                false,
+            )
+        })?;
+    let frozen_profile = &document.snapshot.profile;
+    if workspace.profile.supplier_legal_name != frozen_profile.supplier_legal_name
+        || workspace.profile.supplier_bank_name != frozen_profile.supplier_bank_name
+        || workspace.profile.supplier_bank_account != frozen_profile.supplier_bank_account
+    {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_BANK_ACCOUNT_CHANGED",
+            "supplier or bank account data changed after the payment application snapshot was frozen",
+            false,
+        ));
+    }
+    let frozen_bank_account_version =
+        payment_bank_account_profile_version(frozen_profile, &data.supplier_bank_routing_number);
+    let current_bank_account_version = payment_bank_account_profile_version(
+        &workspace.profile,
+        &data.supplier_bank_routing_number,
+    );
+    if data.bank_account_profile_version != frozen_bank_account_version
+        || data.bank_account_profile_version != current_bank_account_version
+    {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_BANK_ACCOUNT_CHANGED",
+            "bank account version changed; the routing number remains bound to the frozen payment application input because the authoritative profile has no routing-number field",
+            false,
+        ));
+    }
+    if workspace.financial_summary.received_cents != data.cumulative_paid_cents {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_LEDGER_CHANGED",
+            "receipt ledger changed after the payment application snapshot was frozen",
+            false,
+        ));
+    }
+    let payment = workspace
+        .payments
+        .iter()
+        .find(|payment| payment.id == data.payment_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_PAYMENT_NOT_FOUND",
+                "frozen payment application references a missing payment",
+                false,
+            )
+        })?;
+    if document.snapshot.payment.as_ref() != Some(payment) {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_VERSION_CHANGED",
+            "payment plan changed after the payment application snapshot was frozen",
+            false,
+        ));
+    }
+    let (has_invoice_records, current_invoice_cents) =
+        invoice_ledger_for_payment(workspace, &payment.id)?;
+    if has_invoice_records && current_invoice_cents != data.invoice_amount_cents {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_INVOICE_LEDGER_CHANGED",
+            "invoice ledger net amount changed after the payment application snapshot was frozen",
+            false,
+        ));
+    }
+    let current_payment_received = receipt_net_for_payment(&workspace.receipts, &payment.id)?;
+    let outstanding = payment
+        .amount_cents
+        .checked_sub(current_payment_received)
+        .ok_or_else(|| HostError::validation("payment outstanding overflowed"))?;
+    if outstanding != data.remaining_payable_cents {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_REMAINING_PAYABLE_MISMATCH",
+            "current payment outstanding no longer matches the frozen remaining payable",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_acceptance_output_format(
+    workspace: &BusinessWorkspaceRecord,
+    document: &BusinessDocumentRecord,
+    format: &BusinessDocumentFormat,
+) -> Result<(), HostError> {
+    if document.kind != BusinessDocumentKind::Acceptance {
+        return Ok(());
+    }
+    let (Some(batch_id), Some(output_spec_id)) = (
+        document.snapshot.acceptance_batch_id.as_deref(),
+        document.snapshot.acceptance_output_spec_id.as_deref(),
+    ) else {
+        return Ok(());
+    };
+    let output_spec = workspace
+        .acceptance_batches
+        .iter()
+        .find(|batch| batch.id == batch_id)
+        .and_then(|batch| {
+            batch
+                .output_specs
+                .iter()
+                .find(|output_spec| output_spec.id == output_spec_id)
+        })
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_NOT_FOUND",
+                "acceptance document output spec no longer exists in its batch",
+                false,
+            )
+        })?;
+    if output_spec.format == *format {
+        Ok(())
+    } else {
+        Err(HostError::new(
+            "BUSINESS_ACCEPTANCE_OUTPUT_FORMAT_MISMATCH",
+            "acceptance document format must match its configured output spec",
+            false,
+        ))
+    }
 }
 
 fn finalize_generation(
@@ -4701,8 +9153,12 @@ fn finalize_generation(
                 false,
             )
         })?;
+    ensure_acceptance_output_format(&workspace, document, &payload.format)?;
     ensure_document_generatable(document, &payload.format)?;
     ensure_document_prerequisites(&workspace, &document.kind)?;
+    if let Some(batch_id) = document.snapshot.acceptance_batch_id.as_deref() {
+        ensure_acceptance_ready(&workspace, batch_id)?;
+    }
     if document.kind == BusinessDocumentKind::Contract {
         ensure_current_quote_confirmed(transaction, vault_root, &workspace)?;
     }
@@ -5385,7 +9841,7 @@ fn reverse_receipt(
 fn merge_confirmed_requirement(
     profile: &BusinessProfile,
     content: RequirementBriefContent,
-) -> BusinessProfile {
+) -> Result<BusinessProfile, HostError> {
     let mut proposed = profile.clone();
     proposed.delivery_summary = join_sections([
         content.objective.as_str(),
@@ -5423,7 +9879,11 @@ fn merge_confirmed_requirement(
             }
         })
         .collect();
-    proposed
+    proposed.quotation_totals = Some(calculate_quotation_totals(
+        &proposed.line_items,
+        proposed.project_discount_cents,
+    )?);
+    Ok(proposed)
 }
 
 fn adopt_latest_confirmed_requirement(
@@ -5481,7 +9941,7 @@ fn adopt_latest_confirmed_requirement(
             false,
         ));
     }
-    let proposed = merge_confirmed_requirement(&workspace.profile, latest.2);
+    let proposed = merge_confirmed_requirement(&workspace.profile, latest.2)?;
     let now = now_millis();
     let changed = transaction
         .execute(
@@ -5504,6 +9964,258 @@ fn adopt_latest_confirmed_requirement(
         .map_err(sql_error)?;
     ensure_changed(changed)?;
     load_workspace(transaction, &workspace.id)
+}
+
+fn upsert_settlement_batch(
+    transaction: &Transaction<'_>,
+    payload: &UpsertBusinessSettlementBatchPayload,
+    expected_revision: i64,
+    project_id: &str,
+) -> Result<BusinessWorkspaceRecord, HostError> {
+    let workspace = load_workspace(transaction, &payload.workspace_id)?;
+    ensure_workspace_mutable(&workspace, expected_revision, project_id)?;
+    if payload.batch.status == BusinessSettlementBatchStatus::Voided {
+        return Err(HostError::new(
+            "BUSINESS_SETTLEMENT_STATUS_MANAGED",
+            "void settlement batches with the dedicated void command",
+            false,
+        ));
+    }
+    if payload.batch.lines.is_empty() {
+        return Err(HostError::validation(
+            "settlement batch must contain at least one deliverable",
+        ));
+    }
+    if payload.batch.lines.len() > MAX_SETTLEMENT_LINES_PER_BATCH {
+        return Err(HostError::validation(format!(
+            "settlement batch cannot contain more than {MAX_SETTLEMENT_LINES_PER_BATCH} lines"
+        )));
+    }
+    let batch_id = payload
+        .batch
+        .id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let existing = workspace
+        .settlement_batches
+        .iter()
+        .find(|batch| batch.id == batch_id);
+    if payload.batch.id.is_some() && existing.is_none() {
+        return Err(HostError::new(
+            "BUSINESS_SETTLEMENT_BATCH_NOT_FOUND",
+            "settlement batch ID does not belong to this workspace",
+            false,
+        ));
+    }
+    if existing.is_some_and(|batch| batch.status == BusinessSettlementBatchStatus::Voided) {
+        return Err(HostError::new(
+            "BUSINESS_SETTLEMENT_BATCH_VOIDED",
+            "voided settlement batches cannot be edited",
+            false,
+        ));
+    }
+    if existing.is_none()
+        && workspace.settlement_batches.len() >= MAX_SETTLEMENT_BATCHES_PER_WORKSPACE
+    {
+        return Err(HostError::new(
+            "BUSINESS_SETTLEMENT_BATCH_LIMIT_REACHED",
+            "workspace settlement batch limit has been reached",
+            false,
+        ));
+    }
+    let contract_number = normalize_required(
+        "contractNumber",
+        payload.batch.contract_number.clone(),
+        MAX_SHORT_CHARS,
+    )?;
+    let settlement_period = normalize_required(
+        "settlementPeriod",
+        payload.batch.settlement_period.clone(),
+        MAX_SHORT_CHARS,
+    )?;
+    let notes = normalize_text("notes", payload.batch.notes.clone(), MAX_TEXT_CHARS)?;
+    let mut seen_deliverables = HashSet::new();
+    let mut lines = Vec::with_capacity(payload.batch.lines.len());
+    for input in &payload.batch.lines {
+        if !seen_deliverables.insert(input.deliverable_id.clone()) {
+            return Err(HostError::new(
+                "BUSINESS_SETTLEMENT_DELIVERABLE_DUPLICATE",
+                "a deliverable can appear only once in a settlement batch",
+                false,
+            ));
+        }
+        if workspace.settlement_batches.iter().any(|batch| {
+            batch.id != batch_id
+                && batch.status != BusinessSettlementBatchStatus::Voided
+                && batch
+                    .lines
+                    .iter()
+                    .any(|line| line.deliverable_id == input.deliverable_id)
+        }) {
+            return Err(HostError::new(
+                "BUSINESS_SETTLEMENT_DELIVERABLE_ALREADY_RESERVED",
+                "deliverable is already referenced by another active settlement batch",
+                false,
+            ));
+        }
+        let (milestone_id, deliverable_name) = workspace
+            .milestones
+            .iter()
+            .find_map(|milestone| {
+                milestone
+                    .deliverables
+                    .iter()
+                    .find(|deliverable| deliverable.id == input.deliverable_id)
+                    .map(|deliverable| (milestone.id.clone(), deliverable.name.clone()))
+            })
+            .ok_or_else(|| {
+                HostError::new(
+                    "BUSINESS_SETTLEMENT_DELIVERABLE_NOT_FOUND",
+                    "settlement deliverable does not exist in this workspace",
+                    false,
+                )
+            })?;
+        validate_settlement_line(input)?;
+        lines.push(BusinessSettlementLineRecord {
+            deliverable_id: input.deliverable_id.clone(),
+            milestone_id,
+            deliverable_name,
+            contract_quantity_millis: input.contract_quantity_millis,
+            cumulative_executed_millis: input.cumulative_executed_millis,
+            current_executed_millis: input.current_executed_millis,
+            cumulative_accepted_millis: input.cumulative_accepted_millis,
+            current_accepted_millis: input.current_accepted_millis,
+            cumulative_settled_millis: input.current_settlement_millis,
+            current_settlement_millis: input.current_settlement_millis,
+            remaining_quantity_millis: input.contract_quantity_millis
+                - input.current_settlement_millis,
+            unit: normalize_required("unit", input.unit.clone(), MAX_SHORT_CHARS)?,
+            notes: normalize_text("line notes", input.notes.clone(), MAX_TEXT_CHARS)?,
+        });
+    }
+    let now = now_millis();
+    let mut batches = workspace.settlement_batches.clone();
+    let record = BusinessSettlementBatchRecord {
+        id: batch_id.clone(),
+        workspace_id: workspace.id.clone(),
+        contract_number,
+        settlement_period,
+        cadence: payload.batch.cadence.clone(),
+        status: payload.batch.status.clone(),
+        lines,
+        notes,
+        revision: existing.map_or(1, |batch| batch.revision + 1),
+        created_at: existing.map_or(now, |batch| batch.created_at),
+        updated_at: now,
+        voided_at: None,
+        voided_by: None,
+        void_reason: String::new(),
+    };
+    if let Some(index) = batches.iter().position(|batch| batch.id == batch_id) {
+        batches[index] = record;
+    } else {
+        batches.push(record);
+    }
+    persist_settlement_batches(transaction, &workspace, expected_revision, &batches, now)?;
+    load_workspace(transaction, &workspace.id)
+}
+
+fn validate_settlement_line(input: &BusinessSettlementLineInput) -> Result<(), HostError> {
+    if input.contract_quantity_millis <= 0 {
+        return Err(HostError::validation(
+            "contractQuantityMillis must be greater than zero",
+        ));
+    }
+    for (field, value) in [
+        ("cumulativeExecutedMillis", input.cumulative_executed_millis),
+        ("currentExecutedMillis", input.current_executed_millis),
+        ("cumulativeAcceptedMillis", input.cumulative_accepted_millis),
+        ("currentAcceptedMillis", input.current_accepted_millis),
+    ] {
+        if value < 0 {
+            return Err(HostError::validation(format!("{field} cannot be negative")));
+        }
+    }
+    if input.current_settlement_millis <= 0 {
+        return Err(HostError::validation(
+            "currentSettlementMillis must be greater than zero",
+        ));
+    }
+    if input.cumulative_executed_millis > input.contract_quantity_millis
+        || input.current_executed_millis > input.cumulative_executed_millis
+        || input.cumulative_accepted_millis > input.cumulative_executed_millis
+        || input.current_accepted_millis > input.cumulative_accepted_millis
+        || input.current_settlement_millis > input.cumulative_accepted_millis
+        || input.current_settlement_millis > input.contract_quantity_millis
+    {
+        return Err(HostError::new(
+            "BUSINESS_SETTLEMENT_QUANTITY_INVALID",
+            "settlement quantities must satisfy current <= cumulative <= contract and settlement <= accepted",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn void_settlement_batch(
+    transaction: &Transaction<'_>,
+    payload: &VoidBusinessSettlementBatchPayload,
+    expected_revision: i64,
+    context: &NormalizedContext,
+) -> Result<BusinessWorkspaceRecord, HostError> {
+    let workspace = load_workspace(transaction, &payload.workspace_id)?;
+    ensure_workspace_mutable(&workspace, expected_revision, &context.project_id)?;
+    let reason = normalize_required("reason", payload.reason.clone(), MAX_TEXT_CHARS)?;
+    let mut batches = workspace.settlement_batches.clone();
+    let batch = batches
+        .iter_mut()
+        .find(|batch| batch.id == payload.batch_id)
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_SETTLEMENT_BATCH_NOT_FOUND",
+                "settlement batch does not exist in this workspace",
+                false,
+            )
+        })?;
+    if batch.status == BusinessSettlementBatchStatus::Voided {
+        return Err(HostError::new(
+            "BUSINESS_SETTLEMENT_BATCH_ALREADY_VOIDED",
+            "settlement batch is already voided",
+            false,
+        ));
+    }
+    let now = now_millis();
+    batch.status = BusinessSettlementBatchStatus::Voided;
+    batch.revision += 1;
+    batch.updated_at = now;
+    batch.voided_at = Some(now);
+    batch.voided_by = Some(context.actor_id.clone());
+    batch.void_reason = reason;
+    persist_settlement_batches(transaction, &workspace, expected_revision, &batches, now)?;
+    load_workspace(transaction, &workspace.id)
+}
+
+fn persist_settlement_batches(
+    transaction: &Transaction<'_>,
+    workspace: &BusinessWorkspaceRecord,
+    expected_revision: i64,
+    batches: &[BusinessSettlementBatchRecord],
+    now: i64,
+) -> Result<(), HostError> {
+    let changed = transaction
+        .execute(
+            "UPDATE business_workspaces
+             SET settlement_batches_json = ?1, revision = revision + 1, updated_at = ?2
+             WHERE id = ?3 AND revision = ?4",
+            params![
+                serde_json::to_string(batches).map_err(json_error)?,
+                now,
+                workspace.id,
+                expected_revision,
+            ],
+        )
+        .map_err(sql_error)?;
+    ensure_changed(changed)
 }
 
 fn upsert_payment(
@@ -5848,8 +10560,8 @@ fn load_workspace(
     let base = connection
         .query_row(
             "SELECT id, project_id, requirement_brief_id, requirement_brief_revision,
-                    prefill_source_workspace_id, profile_json, status, archived_at, archived_by,
-                    revision, created_at, updated_at
+                    prefill_source_workspace_id, profile_json, settlement_batches_json,
+                    status, archived_at, archived_by, revision, created_at, updated_at
              FROM business_workspaces WHERE id = ?1",
             [workspace_id],
             workspace_base_from_row,
@@ -5864,6 +10576,9 @@ fn load_workspace(
             )
         })?;
     let documents = load_documents(connection, workspace_id)?;
+    let template_versions = load_template_versions(connection, workspace_id)?;
+    let acceptance_batches =
+        load_acceptance_batches(connection, workspace_id, &base.project_id, &documents)?;
     let payments = load_payments(connection, workspace_id)?;
     let quote_confirmations = load_quote_confirmations(connection, workspace_id)?;
     let receipts = load_business_receipts(connection, workspace_id)?;
@@ -5886,10 +10601,13 @@ fn load_workspace(
         prefill_source_workspace_id: base.prefill_source_workspace_id,
         profile,
         documents,
+        acceptance_batches,
+        template_versions,
         payments,
         quote_confirmations,
         receipts,
         milestones,
+        settlement_batches: base.settlement_batches,
         delivery_submissions,
         invoices,
         archive_snapshots,
@@ -5910,6 +10628,54 @@ fn load_workspace(
     Ok(workspace)
 }
 
+fn load_template_versions(
+    connection: &Connection,
+    workspace_id: &str,
+) -> Result<Vec<BusinessTemplateVersionRecord>, HostError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, workspace_id, source_asset_id, source_sha256,
+                    normalized_asset_id, normalized_sha256, template_key, mapping_version,
+                    converter_engine, converter_version, converter_policy_version,
+                    status, reviewed_by, reviewed_at, review_note,
+                    revision, created_at, updated_at
+             FROM business_template_versions
+             WHERE workspace_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(sql_error)?;
+    let records = statement
+        .query_map([workspace_id], template_version_from_row)
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    Ok(records)
+}
+
+fn template_version_from_row(row: &Row<'_>) -> rusqlite::Result<BusinessTemplateVersionRecord> {
+    let status: String = row.get(11)?;
+    Ok(BusinessTemplateVersionRecord {
+        id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        source_asset_id: row.get(2)?,
+        source_sha256: row.get(3)?,
+        normalized_asset_id: row.get(4)?,
+        normalized_sha256: row.get(5)?,
+        template_key: row.get(6)?,
+        mapping_version: row.get(7)?,
+        converter_engine: row.get(8)?,
+        converter_version: row.get(9)?,
+        converter_policy_version: row.get(10)?,
+        status: template_version_status_from_db(&status)?,
+        reviewed_by: row.get(12)?,
+        reviewed_at: row.get(13)?,
+        review_note: row.get(14)?,
+        revision: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+    })
+}
+
 fn current_document(
     documents: &[BusinessDocumentRecord],
     kind: BusinessDocumentKind,
@@ -5922,12 +10688,18 @@ fn current_document(
 }
 
 fn document_total_cents(document: &BusinessDocumentRecord) -> i64 {
-    document
-        .snapshot
-        .profile
-        .line_items
-        .iter()
-        .fold(0_i64, |total, item| total.saturating_add(item.amount_cents))
+    let profile = &document.snapshot.profile;
+    profile
+        .quotation_totals
+        .as_ref()
+        .map(|totals| totals.final_total_cents)
+        .unwrap_or_else(|| {
+            profile
+                .line_items
+                .iter()
+                .fold(0_i64, |total, item| total.saturating_add(item.amount_cents))
+                .saturating_sub(profile.project_discount_cents)
+        })
 }
 
 fn derive_current_documents(documents: &[BusinessDocumentRecord]) -> BusinessCurrentDocuments {
@@ -6068,6 +10840,7 @@ struct WorkspaceBase {
     requirement_brief_revision: Option<i64>,
     prefill_source_workspace_id: Option<String>,
     profile: BusinessProfile,
+    settlement_batches: Vec<BusinessSettlementBatchRecord>,
     status: BusinessWorkspaceStatus,
     archived_at: Option<i64>,
     archived_by: Option<String>,
@@ -6079,7 +10852,9 @@ struct WorkspaceBase {
 fn workspace_base_from_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceBase> {
     let profile_json: String = row.get(5)?;
     let profile = from_json_column(&profile_json)?;
-    let status_value: String = row.get(6)?;
+    let settlement_batches_json: String = row.get(6)?;
+    let settlement_batches = from_json_column(&settlement_batches_json)?;
+    let status_value: String = row.get(7)?;
     Ok(WorkspaceBase {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -6087,12 +10862,13 @@ fn workspace_base_from_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceBase> {
         requirement_brief_revision: row.get(3)?,
         prefill_source_workspace_id: row.get(4)?,
         profile,
+        settlement_batches,
         status: workspace_status_from_db(&status_value)?,
-        archived_at: row.get(7)?,
-        archived_by: row.get(8)?,
-        revision: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        archived_at: row.get(8)?,
+        archived_by: row.get(9)?,
+        revision: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 
@@ -6106,7 +10882,8 @@ fn load_documents(
                     status, snapshot_json, output_asset_id, output_format,
                     source_asset_id, review_id, report_asset_id, evidence_json,
                     manual_waiver_json, voided_at, voided_by, void_reason,
-                    approved_at, approved_by, generated_at, revision, created_at, updated_at
+                    approved_at, approved_by, generated_at, revision, created_at, updated_at,
+                    acceptance_output_spec_id
              FROM business_documents WHERE workspace_id = ?1
              ORDER BY created_at ASC, id ASC",
         )
@@ -6119,11 +10896,190 @@ fn load_documents(
     Ok(documents)
 }
 
+fn load_acceptance_batches(
+    connection: &Connection,
+    workspace_id: &str,
+    project_id: &str,
+    documents: &[BusinessDocumentRecord],
+) -> Result<Vec<BusinessAcceptanceBatchRecord>, HostError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, label, requirements_json, output_specs_json,
+                    revision, created_at, updated_at
+             FROM business_acceptance_batches WHERE workspace_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map([workspace_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    rows.into_iter()
+        .map(
+            |(
+                id,
+                label,
+                requirements_json,
+                output_specs_json,
+                revision,
+                created_at,
+                updated_at,
+            )| {
+                let requirements: Vec<BusinessAcceptanceRequirementRecord> =
+                    serde_json::from_str(&requirements_json).map_err(json_error)?;
+                let mut output_specs: Vec<BusinessAcceptanceOutputSpecRecord> =
+                    serde_json::from_str(&output_specs_json).map_err(json_error)?;
+                for output_spec in &mut output_specs {
+                    if output_spec.output_code.is_empty() {
+                        output_spec.output_code = format!("legacy-{}", output_spec.id);
+                    }
+                }
+                let materials = load_acceptance_materials(connection, &id)?;
+                let bindings = load_acceptance_material_bindings(connection, project_id, &id)?;
+                let readiness = acceptance_readiness(&requirements, &bindings);
+                let document_ids = documents
+                    .iter()
+                    .filter(|document| {
+                        document.snapshot.acceptance_batch_id.as_deref() == Some(id.as_str())
+                    })
+                    .map(|document| document.id.clone())
+                    .collect::<Vec<_>>();
+                let linked_documents = output_specs
+                    .iter()
+                    .filter_map(|spec| acceptance_document_for_spec(documents, &id, spec))
+                    .collect::<Vec<_>>();
+                let all_outputs_prepared = linked_documents.len() == output_specs.len();
+                let status = if all_outputs_prepared
+                    && linked_documents.iter().all(|document| {
+                        matches!(
+                            document.status,
+                            BusinessDocumentStatus::Generated | BusinessDocumentStatus::Effective
+                        )
+                    }) {
+                    BusinessAcceptanceBatchStatus::Generated
+                } else if all_outputs_prepared
+                    && linked_documents.iter().all(|document| {
+                        matches!(
+                            document.status,
+                            BusinessDocumentStatus::Approved
+                                | BusinessDocumentStatus::Generated
+                                | BusinessDocumentStatus::Effective
+                        )
+                    })
+                {
+                    BusinessAcceptanceBatchStatus::Approved
+                } else if all_outputs_prepared {
+                    BusinessAcceptanceBatchStatus::DocumentsPrepared
+                } else {
+                    BusinessAcceptanceBatchStatus::Collecting
+                };
+                Ok(BusinessAcceptanceBatchRecord {
+                    id,
+                    workspace_id: workspace_id.to_string(),
+                    label,
+                    requirements,
+                    output_specs,
+                    materials,
+                    readiness,
+                    document_ids,
+                    status,
+                    revision,
+                    created_at,
+                    updated_at,
+                })
+            },
+        )
+        .collect()
+}
+
+fn load_acceptance_materials(
+    connection: &Connection,
+    batch_id: &str,
+) -> Result<Vec<BusinessAcceptanceMaterialRecord>, HostError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, requirement_id, asset_id, kind, group_key, confirmed,
+                    duplicate_of_material_id, notes, revision, created_at, updated_at
+             FROM business_acceptance_materials WHERE batch_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(sql_error)?;
+    let materials = statement
+        .query_map([batch_id], |row| {
+            let kind: String = row.get(3)?;
+            Ok(BusinessAcceptanceMaterialRecord {
+                id: row.get(0)?,
+                batch_id: batch_id.to_string(),
+                requirement_id: row.get(1)?,
+                asset_id: row.get(2)?,
+                kind: acceptance_material_kind_from_db(&kind)?,
+                group_key: row.get(4)?,
+                confirmed: row.get(5)?,
+                duplicate_of_material_id: row.get(6)?,
+                notes: row.get(7)?,
+                revision: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    Ok(materials)
+}
+
+fn acceptance_readiness(
+    requirements: &[BusinessAcceptanceRequirementRecord],
+    bindings: &[BusinessAcceptanceMaterialBinding],
+) -> BusinessAcceptanceReadiness {
+    let blockers = requirements
+        .iter()
+        .filter_map(|requirement| {
+            let provided_group_count = bindings
+                .iter()
+                .filter(|binding| binding.requirement_id == requirement.id)
+                .map(|binding| binding.group_key.as_str())
+                .collect::<HashSet<_>>()
+                .len() as u32;
+            let missing_group_count = requirement
+                .required_group_count
+                .saturating_sub(provided_group_count);
+            (missing_group_count > 0).then(|| BusinessAcceptanceBlocker {
+                code: "missingMaterialGroups".to_string(),
+                requirement_id: requirement.id.clone(),
+                requirement_label: requirement.label.clone(),
+                required_group_count: requirement.required_group_count,
+                provided_group_count,
+                missing_group_count,
+            })
+        })
+        .collect::<Vec<_>>();
+    BusinessAcceptanceReadiness {
+        is_ready: blockers.is_empty(),
+        blockers,
+    }
+}
+
 fn document_from_row(row: &Row<'_>) -> rusqlite::Result<BusinessDocumentRecord> {
     let kind: String = row.get(1)?;
     let status: String = row.get(6)?;
     let snapshot_json: String = row.get(7)?;
     let format: Option<String> = row.get(9)?;
+    let mut snapshot: BusinessDocumentSnapshot = from_json_column(&snapshot_json)?;
+    if snapshot.acceptance_output_spec_id.is_none() {
+        snapshot.acceptance_output_spec_id = row.get(24)?;
+    }
     Ok(BusinessDocumentRecord {
         id: row.get(0)?,
         kind: document_kind_from_db(&kind)?,
@@ -6132,7 +11088,7 @@ fn document_from_row(row: &Row<'_>) -> rusqlite::Result<BusinessDocumentRecord> 
         title: row.get(4)?,
         template_key: row.get(5)?,
         status: document_status_from_db(&status)?,
-        snapshot: from_json_column(&snapshot_json)?,
+        snapshot,
         output_asset_id: row.get(8)?,
         output_format: format
             .map(|value| document_format_from_db(&value))
@@ -6287,6 +11243,9 @@ fn command_reason(command_type: &str) -> &'static str {
         "businessWorkspace.upsertCustomer" => "更新客户主数据",
         "businessWorkspace.assignCustomer" => "更换关联客户",
         "businessWorkspace.upsertMilestone" => "更新交付里程碑",
+        "businessWorkspace.createAcceptanceBatch" => "创建验收批次",
+        "businessWorkspace.prepareAcceptanceDocuments" => "准备验收文件",
+        "businessWorkspace.upsertAcceptanceMaterial" => "更新验收素材",
         "businessWorkspace.registerDeliverableVersion" => "登记交付物版本",
         "businessWorkspace.recordDeliverySent" => "登记交付发送",
         "businessWorkspace.recordDeliverySignoff" => "登记客户签收",
@@ -6294,8 +11253,11 @@ fn command_reason(command_type: &str) -> &'static str {
         "businessWorkspace.recordInvoiceRedCorrection" => "登记发票红冲",
         "businessWorkspace.attachInvoiceAsset" => "补充发票附件",
         "businessWorkspace.createArchiveSnapshot" => "生成归档完整性快照",
+        "businessWorkspace.normalizeLegacyTemplate" => "规范化历史 Word 模板",
+        "businessWorkspace.approveTemplateVersion" => "批准模板版本",
+        "businessWorkspace.rejectTemplateVersion" => "拒绝模板版本",
         "businessWorkspace.changeStatus" => "变更商务工作区状态",
-        _ => "执行商务工作台命令",
+        _ => "执行商务系统命令",
     }
 }
 fn append_event(
@@ -6308,6 +11270,8 @@ fn append_event(
     let event_id = Uuid::new_v4().to_string();
     let occurred_at = now_millis();
     let reason = command_reason(command_type);
+    let payload_json = serialize_business_journal(workspace)?;
+    let journal_workspace = serde_json::from_str(&payload_json).map_err(json_error)?;
     transaction
         .execute(
             "INSERT INTO business_workspace_events
@@ -6324,7 +11288,7 @@ fn append_event(
                 meta.context.actor_id,
                 meta.command_id,
                 reason,
-                serde_json::to_string(workspace).map_err(json_error)?,
+                payload_json,
             ],
         )
         .map_err(sql_error)?;
@@ -6339,7 +11303,7 @@ fn append_event(
         actor_id: meta.context.actor_id.clone(),
         command_id: meta.command_id.clone(),
         reason: reason.to_string(),
-        business_workspace: workspace.clone(),
+        business_workspace: journal_workspace,
     })
 }
 
@@ -6428,6 +11392,8 @@ fn find_existing_receipt(
         .map(|receipt| {
             let mut response: BusinessWorkspaceCommandResponse =
                 serde_json::from_str(&receipt.response_json).map_err(json_error)?;
+            response.business_workspace =
+                load_workspace(connection, &response.receipt.aggregate_id)?;
             response.replayed = true;
             Ok(response)
         })
@@ -6489,6 +11455,15 @@ fn command_fingerprint(command: &NormalizedCommand) -> Result<String, HostError>
         NormalizedCommand::CreateDocument { payload, .. } => {
             serde_json::to_value(payload).map_err(json_error)?
         }
+        NormalizedCommand::CreateAcceptanceBatch { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
+        NormalizedCommand::PrepareAcceptanceDocuments { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
+        NormalizedCommand::UpsertAcceptanceMaterial { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
         NormalizedCommand::PromoteReviewedContract { payload, .. } => {
             serde_json::to_value(payload).map_err(json_error)?
         }
@@ -6499,6 +11474,12 @@ fn command_fingerprint(command: &NormalizedCommand) -> Result<String, HostError>
             serde_json::to_value(payload).map_err(json_error)?
         }
         NormalizedCommand::UpsertPayment { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
+        NormalizedCommand::UpsertSettlementBatch { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
+        NormalizedCommand::VoidSettlementBatch { payload, .. } => {
             serde_json::to_value(payload).map_err(json_error)?
         }
         NormalizedCommand::ConfirmQuote { payload, .. } => {
@@ -6543,6 +11524,15 @@ fn command_fingerprint(command: &NormalizedCommand) -> Result<String, HostError>
         NormalizedCommand::CreateArchiveSnapshot { payload, .. } => {
             serde_json::to_value(payload).map_err(json_error)?
         }
+        NormalizedCommand::NormalizeLegacyTemplate { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
+        NormalizedCommand::ApproveTemplateVersion { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
+        NormalizedCommand::RejectTemplateVersion { payload, .. } => {
+            serde_json::to_value(payload).map_err(json_error)?
+        }
         NormalizedCommand::ChangeStatus { payload, .. } => {
             serde_json::to_value(payload).map_err(json_error)?
         }
@@ -6585,7 +11575,10 @@ fn cleanup_generated_asset(
              FROM assets asset
              JOIN asset_origins origin ON origin.asset_id = asset.id
              WHERE asset.id = ?1
-               AND origin.origin IN ('businessDocument','generatedArchiveManifest','generatedArchivePackage')",
+               AND origin.origin IN (
+                   'businessDocument','generatedArchiveManifest','generatedArchivePackage',
+                   'normalizedTemplate'
+               )",
             [asset_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -6601,6 +11594,10 @@ fn cleanup_generated_asset(
                  OR EXISTS(
                     SELECT 1 FROM business_archive_snapshots
                     WHERE manifest_asset_id = ?1 OR package_asset_id = ?1
+                 )
+                 OR EXISTS(
+                    SELECT 1 FROM business_template_versions
+                    WHERE normalized_asset_id = ?1
                  )",
             [asset_id],
             |row| row.get(0),
@@ -6642,7 +11639,10 @@ fn cleanup_generated_asset(
                AND EXISTS(
                    SELECT 1 FROM asset_origins
                    WHERE asset_id = ?1
-                     AND origin IN ('businessDocument','generatedArchiveManifest','generatedArchivePackage')
+                     AND origin IN (
+                         'businessDocument','generatedArchiveManifest','generatedArchivePackage',
+                         'normalizedTemplate'
+                     )
                )
                AND NOT EXISTS(
                    SELECT 1 FROM business_documents WHERE output_asset_id = ?1
@@ -6650,6 +11650,10 @@ fn cleanup_generated_asset(
                AND NOT EXISTS(
                    SELECT 1 FROM business_archive_snapshots
                    WHERE manifest_asset_id = ?1 OR package_asset_id = ?1
+               )
+               AND NOT EXISTS(
+                   SELECT 1 FROM business_template_versions
+                   WHERE normalized_asset_id = ?1
                )",
             [asset_id],
         )
@@ -6922,6 +11926,16 @@ fn normalize_uuid(field: &str, value: String) -> Result<String, HostError> {
         .map_err(|_| HostError::validation(format!("{field} must be a UUID")))
 }
 
+fn normalize_sha256(field: &str, value: String) -> Result<String, HostError> {
+    let value = value.trim();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(HostError::validation(format!(
+            "{field} must be a 64-character hexadecimal SHA-256"
+        )));
+    }
+    Ok(value.to_ascii_uppercase())
+}
+
 fn ensure_changed(changed: usize) -> Result<(), HostError> {
     if changed == 1 {
         Ok(())
@@ -7050,6 +12064,72 @@ fn receipt_kind_from_db(value: &str) -> rusqlite::Result<BusinessReceiptKind> {
     }
 }
 
+fn acceptance_material_kind_to_db(kind: &BusinessAcceptanceMaterialKind) -> &'static str {
+    match kind {
+        BusinessAcceptanceMaterialKind::Script => "script",
+        BusinessAcceptanceMaterialKind::Video => "video",
+        BusinessAcceptanceMaterialKind::Screenshot => "screenshot",
+        BusinessAcceptanceMaterialKind::BehindTheScenes => "behindTheScenes",
+        BusinessAcceptanceMaterialKind::PublishingData => "publishingData",
+        BusinessAcceptanceMaterialKind::Invoice => "invoice",
+        BusinessAcceptanceMaterialKind::Proof => "proof",
+        BusinessAcceptanceMaterialKind::Other => "other",
+    }
+}
+
+fn acceptance_material_kind_from_db(
+    value: &str,
+) -> rusqlite::Result<BusinessAcceptanceMaterialKind> {
+    match value {
+        "script" => Ok(BusinessAcceptanceMaterialKind::Script),
+        "video" => Ok(BusinessAcceptanceMaterialKind::Video),
+        "screenshot" => Ok(BusinessAcceptanceMaterialKind::Screenshot),
+        "behindTheScenes" => Ok(BusinessAcceptanceMaterialKind::BehindTheScenes),
+        "publishingData" => Ok(BusinessAcceptanceMaterialKind::PublishingData),
+        "invoice" => Ok(BusinessAcceptanceMaterialKind::Invoice),
+        "proof" => Ok(BusinessAcceptanceMaterialKind::Proof),
+        "other" => Ok(BusinessAcceptanceMaterialKind::Other),
+        _ => Err(conversion_error("business acceptance material kind", value)),
+    }
+}
+
+fn acceptance_asset_kind_matches_requirement(
+    asset_kind: &str,
+    requirement_kind: &BusinessAcceptanceMaterialKind,
+) -> bool {
+    match requirement_kind {
+        BusinessAcceptanceMaterialKind::Script | BusinessAcceptanceMaterialKind::Invoice => {
+            asset_kind == "document"
+        }
+        BusinessAcceptanceMaterialKind::Video => asset_kind == "video",
+        BusinessAcceptanceMaterialKind::Screenshot => asset_kind == "image",
+        BusinessAcceptanceMaterialKind::BehindTheScenes => {
+            matches!(asset_kind, "image" | "video")
+        }
+        BusinessAcceptanceMaterialKind::PublishingData | BusinessAcceptanceMaterialKind::Proof => {
+            matches!(asset_kind, "document" | "image")
+        }
+        BusinessAcceptanceMaterialKind::Other => asset_kind == "other",
+    }
+}
+
+fn template_version_status_to_db(status: &BusinessTemplateVersionStatus) -> &'static str {
+    match status {
+        BusinessTemplateVersionStatus::PendingReview => "pendingReview",
+        BusinessTemplateVersionStatus::Approved => "approved",
+        BusinessTemplateVersionStatus::Rejected => "rejected",
+    }
+}
+
+fn template_version_status_from_db(value: &str) -> rusqlite::Result<BusinessTemplateVersionStatus> {
+    match value {
+        "pendingReview" => Ok(BusinessTemplateVersionStatus::PendingReview),
+        "approved" => Ok(BusinessTemplateVersionStatus::Approved),
+        "rejected" => Ok(BusinessTemplateVersionStatus::Rejected),
+        _ => Err(conversion_error("business template version status", value)),
+    }
+}
+
 fn event_type_to_db(event_type: &BusinessWorkspaceEventType) -> &'static str {
     match event_type {
         BusinessWorkspaceEventType::Created => "businessWorkspace.created",
@@ -7063,6 +12143,12 @@ fn event_type_to_db(event_type: &BusinessWorkspaceEventType) -> &'static str {
         }
         BusinessWorkspaceEventType::DocumentGenerated => "businessWorkspace.documentGenerated",
         BusinessWorkspaceEventType::PaymentUpserted => "businessWorkspace.paymentUpserted",
+        BusinessWorkspaceEventType::SettlementBatchUpserted => {
+            "businessWorkspace.settlementBatchUpserted"
+        }
+        BusinessWorkspaceEventType::SettlementBatchVoided => {
+            "businessWorkspace.settlementBatchVoided"
+        }
         BusinessWorkspaceEventType::QuoteConfirmed => "businessWorkspace.quoteConfirmed",
         BusinessWorkspaceEventType::ReceiptRecorded => "businessWorkspace.receiptRecorded",
         BusinessWorkspaceEventType::ReceiptReversed => "businessWorkspace.receiptReversed",
@@ -7070,6 +12156,15 @@ fn event_type_to_db(event_type: &BusinessWorkspaceEventType) -> &'static str {
         BusinessWorkspaceEventType::CustomerUpserted => "businessWorkspace.customerUpserted",
         BusinessWorkspaceEventType::CustomerAssigned => "businessWorkspace.customerAssigned",
         BusinessWorkspaceEventType::MilestoneUpserted => "businessWorkspace.milestoneUpserted",
+        BusinessWorkspaceEventType::AcceptanceBatchCreated => {
+            "businessWorkspace.acceptanceBatchCreated"
+        }
+        BusinessWorkspaceEventType::AcceptanceDocumentsPrepared => {
+            "businessWorkspace.acceptanceDocumentsPrepared"
+        }
+        BusinessWorkspaceEventType::AcceptanceMaterialUpserted => {
+            "businessWorkspace.acceptanceMaterialUpserted"
+        }
         BusinessWorkspaceEventType::DeliverableVersionRegistered => {
             "businessWorkspace.deliverableVersionRegistered"
         }
@@ -7084,6 +12179,15 @@ fn event_type_to_db(event_type: &BusinessWorkspaceEventType) -> &'static str {
         }
         BusinessWorkspaceEventType::ArchiveSnapshotPrepared => {
             "businessWorkspace.archiveSnapshotPrepared"
+        }
+        BusinessWorkspaceEventType::TemplateVersionNormalized => {
+            "businessWorkspace.templateVersionNormalized"
+        }
+        BusinessWorkspaceEventType::TemplateVersionApproved => {
+            "businessWorkspace.templateVersionApproved"
+        }
+        BusinessWorkspaceEventType::TemplateVersionRejected => {
+            "businessWorkspace.templateVersionRejected"
         }
         BusinessWorkspaceEventType::StatusChanged => "businessWorkspace.statusChanged",
     }
@@ -7102,6 +12206,12 @@ fn event_type_from_db(value: &str) -> rusqlite::Result<BusinessWorkspaceEventTyp
         }
         "businessWorkspace.documentGenerated" => Ok(BusinessWorkspaceEventType::DocumentGenerated),
         "businessWorkspace.paymentUpserted" => Ok(BusinessWorkspaceEventType::PaymentUpserted),
+        "businessWorkspace.settlementBatchUpserted" => {
+            Ok(BusinessWorkspaceEventType::SettlementBatchUpserted)
+        }
+        "businessWorkspace.settlementBatchVoided" => {
+            Ok(BusinessWorkspaceEventType::SettlementBatchVoided)
+        }
         "businessWorkspace.quoteConfirmed" => Ok(BusinessWorkspaceEventType::QuoteConfirmed),
         "businessWorkspace.receiptRecorded" => Ok(BusinessWorkspaceEventType::ReceiptRecorded),
         "businessWorkspace.receiptReversed" => Ok(BusinessWorkspaceEventType::ReceiptReversed),
@@ -7111,6 +12221,15 @@ fn event_type_from_db(value: &str) -> rusqlite::Result<BusinessWorkspaceEventTyp
         "businessWorkspace.customerUpserted" => Ok(BusinessWorkspaceEventType::CustomerUpserted),
         "businessWorkspace.customerAssigned" => Ok(BusinessWorkspaceEventType::CustomerAssigned),
         "businessWorkspace.milestoneUpserted" => Ok(BusinessWorkspaceEventType::MilestoneUpserted),
+        "businessWorkspace.acceptanceBatchCreated" => {
+            Ok(BusinessWorkspaceEventType::AcceptanceBatchCreated)
+        }
+        "businessWorkspace.acceptanceDocumentsPrepared" => {
+            Ok(BusinessWorkspaceEventType::AcceptanceDocumentsPrepared)
+        }
+        "businessWorkspace.acceptanceMaterialUpserted" => {
+            Ok(BusinessWorkspaceEventType::AcceptanceMaterialUpserted)
+        }
         "businessWorkspace.deliverableVersionRegistered" => {
             Ok(BusinessWorkspaceEventType::DeliverableVersionRegistered)
         }
@@ -7127,6 +12246,15 @@ fn event_type_from_db(value: &str) -> rusqlite::Result<BusinessWorkspaceEventTyp
         }
         "businessWorkspace.archiveSnapshotPrepared" => {
             Ok(BusinessWorkspaceEventType::ArchiveSnapshotPrepared)
+        }
+        "businessWorkspace.templateVersionNormalized" => {
+            Ok(BusinessWorkspaceEventType::TemplateVersionNormalized)
+        }
+        "businessWorkspace.templateVersionApproved" => {
+            Ok(BusinessWorkspaceEventType::TemplateVersionApproved)
+        }
+        "businessWorkspace.templateVersionRejected" => {
+            Ok(BusinessWorkspaceEventType::TemplateVersionRejected)
         }
         "businessWorkspace.statusChanged" => Ok(BusinessWorkspaceEventType::StatusChanged),
         _ => Err(conversion_error("business workspace event type", value)),
@@ -7168,6 +12296,18 @@ fn map_document_insert_error(error: rusqlite::Error) -> HostError {
     }
 }
 
+fn map_acceptance_material_write_error(error: rusqlite::Error) -> HostError {
+    if is_constraint_error(&error) {
+        HostError::new(
+            "BUSINESS_ACCEPTANCE_MATERIAL_CONFLICT",
+            "acceptance batch already contains this asset or the duplicate reference is invalid",
+            false,
+        )
+    } else {
+        sql_error(error)
+    }
+}
+
 fn is_constraint_error(error: &rusqlite::Error) -> bool {
     matches!(
         error,
@@ -7196,10 +12336,24 @@ fn json_error(error: serde_json::Error) -> HostError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{AssetKind, BriefRecord};
+    use crate::protocol::{
+        AssetKind, BriefRecord, BusinessAcceptanceMaterialInput, BusinessAcceptanceOutputSpecInput,
+        BusinessAcceptanceRequirementInput, BusinessProductionResultConfirmationDeliveryItem,
+        BusinessProductionResultConfirmationShot, BusinessProductionResultConfirmationStoryboard,
+        BusinessVideoCompletionAcceptanceAssetReference,
+        BusinessVideoCompletionAcceptanceDeliveryGroup,
+        BusinessVideoCompletionAcceptanceScreenshot, BusinessVideoCompletionAcceptanceVideo,
+    };
     use std::fs::File;
     use std::io::Read;
     use zip::ZipArchive;
+
+    fn external_qa_fixture(relative_path: &str) -> PathBuf {
+        std::env::var_os("BSAIGC_EXTERNAL_QA_FIXTURE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("tests/fixtures/synthetic/business-v1"))
+            .join(relative_path)
+    }
 
     struct TestStore {
         temporary: tempfile::TempDir,
@@ -7395,6 +12549,8 @@ mod tests {
             supplier_bank_account: profile.supplier_bank_account.clone(),
             currency: profile.currency.clone(),
             default_tax_rate_bps: profile.default_tax_rate_bps,
+            tax_mode: profile.tax_mode,
+            project_discount_cents: profile.project_discount_cents,
             service_start_at: profile.service_start_at,
             service_end_at: profile.service_end_at,
             delivery_summary: profile.delivery_summary.clone(),
@@ -7521,6 +12677,7 @@ mod tests {
                 title: format!("{kind:?}"),
                 template_key: test_document_template(&kind).to_string(),
                 payment_id,
+                acceptance_batch_id: None,
             },
             idempotency_key: Uuid::new_v4().to_string(),
             expected_revision: Some(workspace.revision),
@@ -7547,6 +12704,7 @@ mod tests {
                     title: format!("{kind:?}"),
                     template_key: test_document_template(&kind).to_string(),
                     payment_id,
+                    acceptance_batch_id: None,
                 },
                 idempotency_key: Uuid::new_v4().to_string(),
                 expected_revision: Some(workspace.revision),
@@ -7904,6 +13062,1534 @@ mod tests {
         .id
     }
 
+    struct RegisteredProductionResultImage {
+        source_index: usize,
+        file_name: String,
+        mime_type: String,
+        width_px: u32,
+        height_px: u32,
+        bytes: Vec<u8>,
+    }
+
+    fn registered_production_result_images() -> Vec<RegisteredProductionResultImage> {
+        let paths = [
+            external_qa_fixture("scripts/synthetic-series-01.docx"),
+            external_qa_fixture("scripts/synthetic-series-02.docx"),
+            external_qa_fixture("scripts/synthetic-series-03.docx"),
+        ];
+        let mut seen = HashSet::new();
+        let mut images = Vec::new();
+        for path in paths {
+            let file = File::open(path).unwrap();
+            let mut archive = ZipArchive::new(file).unwrap();
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).unwrap();
+                if entry.is_dir() || !entry.name().starts_with("word/media/") {
+                    continue;
+                }
+                let extension = Path::new(entry.name())
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_ascii_lowercase);
+                let mime_type = match extension.as_deref() {
+                    Some("png") => "image/png",
+                    Some("jpg" | "jpeg") => "image/jpeg",
+                    _ => continue,
+                };
+                let file_name = Path::new(entry.name())
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap()
+                    .to_string();
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).unwrap();
+                let digest = format!("{:X}", Sha256::digest(&bytes));
+                if !seen.insert(digest) {
+                    continue;
+                }
+                let (width_px, height_px) =
+                    video_completion_image_dimensions(mime_type, &bytes).unwrap();
+                images.push(RegisteredProductionResultImage {
+                    source_index: images.len(),
+                    file_name,
+                    mime_type: mime_type.to_string(),
+                    width_px,
+                    height_px,
+                    bytes,
+                });
+            }
+        }
+        images.sort_by(|left, right| {
+            let left_landscape = left.width_px >= left.height_px;
+            let right_landscape = right.width_px >= right.height_px;
+            right_landscape
+                .cmp(&left_landscape)
+                .then_with(|| right.bytes.len().cmp(&left.bytes.len()))
+                .then_with(|| left.source_index.cmp(&right.source_index))
+        });
+        assert!(images.len() >= 60, "真实脚本图片不足 60 张");
+        images.truncate(60);
+        images
+    }
+
+    fn production_result_confirmation_data() -> BusinessProductionResultConfirmationData {
+        let shot_counts = [14_usize, 14, 13, 13];
+        let mut next_shot = 1_usize;
+        let storyboards = shot_counts
+            .into_iter()
+            .enumerate()
+            .map(|(storyboard_index, shot_count)| {
+                let storyboard_number = format!("SB-{:02}", storyboard_index + 1);
+                let shots = (0..shot_count)
+                    .map(|_| {
+                        let shot_number = format!("SHOT-{next_shot:02}");
+                        next_shot += 1;
+                        let asset_id = Uuid::new_v4().to_string();
+                        BusinessProductionResultConfirmationShot {
+                            shot_number: shot_number.clone(),
+                            shot_description: format!("{shot_number} 画面描述"),
+                            images: vec![BusinessProductionResultConfirmationAssetReference {
+                                asset_id,
+                                sha256: "A".repeat(64),
+                                group_key: format!("{storyboard_number}/{shot_number}/image-1"),
+                                file_name: format!("{shot_number}.png"),
+                                caption: format!("{shot_number} 画面"),
+                            }],
+                        }
+                    })
+                    .collect();
+                BusinessProductionResultConfirmationStoryboard {
+                    storyboard_number: storyboard_number.clone(),
+                    title: format!("脚本章节 {}", storyboard_index + 1),
+                    description: format!("{storyboard_number} 制作说明"),
+                    shots,
+                }
+            })
+            .collect();
+        BusinessProductionResultConfirmationData {
+            attachment_label: "附件一".to_string(),
+            contract_title: "白鹅潭瑞玺制作服务合同".to_string(),
+            project_title: "白鹅潭瑞玺系列视频".to_string(),
+            category: "视频制作".to_string(),
+            payment_amount_cents: 9_752_000,
+            contract_deliverable_summary: "完成四个章节、五十四个镜号的制作成果".to_string(),
+            supplier_legal_name: "广州示例文化有限公司".to_string(),
+            procurement_period: "2026-05-01 至 2026-07-20".to_string(),
+            delivery_items: vec![BusinessProductionResultConfirmationDeliveryItem {
+                item_key: "production-delivery-1".to_string(),
+                title: "系列视频制作成果".to_string(),
+                deliverable_summary: "按合同完成脚本、画面和成片制作".to_string(),
+                evidence_images: Vec::new(),
+                storyboards,
+            }],
+            acceptance_description: "成果内容和数量符合合同约定".to_string(),
+            penalty_or_addition: "无".to_string(),
+            completion_date: "2026-07-20".to_string(),
+            acceptance_date: "2026-07-28".to_string(),
+            clean_highlights_confirmed: true,
+            manually_confirmed: true,
+        }
+    }
+
+    #[test]
+    fn production_result_confirmation_normalization_freezes_confirmed_54_shot_contract() {
+        let normalized =
+            normalize_production_result_confirmation_data(production_result_confirmation_data())
+                .unwrap();
+        assert_eq!(
+            normalized
+                .delivery_items
+                .iter()
+                .flat_map(|item| item.storyboards.iter())
+                .count(),
+            4
+        );
+        assert_eq!(
+            normalized
+                .delivery_items
+                .iter()
+                .flat_map(|item| item.storyboards.iter())
+                .flat_map(|storyboard| storyboard.shots.iter())
+                .count(),
+            54
+        );
+
+        let mut unconfirmed = production_result_confirmation_data();
+        unconfirmed.clean_highlights_confirmed = false;
+        assert_eq!(
+            normalize_production_result_confirmation_data(unconfirmed)
+                .unwrap_err()
+                .code,
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_HIGHLIGHT_CONFIRMATION_REQUIRED"
+        );
+
+        let mut duplicate = production_result_confirmation_data();
+        let first = duplicate.delivery_items[0].storyboards[0].shots[0].images[0].clone();
+        duplicate.delivery_items[0].storyboards[0].shots[1].images[0] = first;
+        assert_eq!(
+            normalize_production_result_confirmation_data(duplicate)
+                .unwrap_err()
+                .code,
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIAL_DUPLICATE"
+        );
+    }
+    fn video_completion_acceptance_data(
+        video_asset_id: &str,
+        video_file_name: &str,
+        video_sha256: &str,
+        screenshot_asset_id: &str,
+        screenshot_sha256: &str,
+        manually_confirmed: bool,
+    ) -> BusinessVideoCompletionAcceptanceData {
+        BusinessVideoCompletionAcceptanceData {
+            contract_title: "White Goose Pond annual production contract".to_string(),
+            project_title: "White Goose Pond video delivery".to_string(),
+            completion_date: "2026-07-29".to_string(),
+            delivery_groups: vec![BusinessVideoCompletionAcceptanceDeliveryGroup {
+                group_key: "delivery-group-1".to_string(),
+                name: "Campaign film".to_string(),
+                service_description: "Completed master video and evidence screenshots".to_string(),
+                videos: vec![BusinessVideoCompletionAcceptanceVideo {
+                    title: "Campaign master".to_string(),
+                    video_type: "master".to_string(),
+                    content: "Approved final campaign edit".to_string(),
+                    duration: "00:30".to_string(),
+                    asset_reference: BusinessVideoCompletionAcceptanceAssetReference {
+                        asset_id: video_asset_id.to_string(),
+                        file_name: video_file_name.to_string(),
+                        sha256: video_sha256.to_string(),
+                        external_link: Some("https://example.com/delivery/master".to_string()),
+                    },
+                    screenshots: vec![BusinessVideoCompletionAcceptanceScreenshot {
+                        asset_id: screenshot_asset_id.to_string(),
+                        sha256: screenshot_sha256.to_string(),
+                        caption: "Opening frame".to_string(),
+                    }],
+                }],
+            }],
+            acceptance_conclusion: "Delivery accepted".to_string(),
+            manually_confirmed,
+        }
+    }
+
+    fn create_acceptance_batch_command(
+        project_id: &str,
+        workspace: &BusinessWorkspaceRecord,
+    ) -> BusinessWorkspaceCommandEnvelope {
+        let requirement_kinds = [
+            BusinessAcceptanceMaterialKind::Video,
+            BusinessAcceptanceMaterialKind::Script,
+            BusinessAcceptanceMaterialKind::Screenshot,
+            BusinessAcceptanceMaterialKind::BehindTheScenes,
+            BusinessAcceptanceMaterialKind::PublishingData,
+            BusinessAcceptanceMaterialKind::Proof,
+        ];
+        let requirements = requirement_kinds
+            .into_iter()
+            .enumerate()
+            .map(|(index, kind)| BusinessAcceptanceRequirementInput {
+                id: Some(Uuid::new_v4().to_string()),
+                label: format!("内容槽位 {}", index + 1),
+                kind,
+                required_group_count: if index == 0 { 4 } else { 1 },
+            })
+            .collect::<Vec<_>>();
+        let requirement_ids = requirements
+            .iter()
+            .map(|requirement| requirement.id.clone().unwrap())
+            .collect::<Vec<_>>();
+        BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch {
+            command_id: Uuid::new_v4().to_string(),
+            protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+            context: context(project_id),
+            payload: CreateBusinessAcceptanceBatchPayload {
+                workspace_id: workspace.id.clone(),
+                label: "白鹅潭验收批次".to_string(),
+                requirements,
+                output_specs: (0..5)
+                    .map(|index| BusinessAcceptanceOutputSpecInput {
+                        id: None,
+                        output_code: format!("acceptance-output-{}", index + 1),
+                        document_number: format!("BSE-ACC-{}", index + 1),
+                        title: format!("白鹅潭验收文件 {}", index + 1),
+                        template_key: document_engine::ACCEPTANCE_TEMPLATE_KEY.to_string(),
+                        template_asset_id: None,
+                        template_source_sha256: None,
+                        template_mapping_version: String::new(),
+                        contract_settlement: None,
+                        service_settlement_items: Vec::new(),
+                        payment_application: None,
+                        video_completion_acceptance: None,
+                        production_result_confirmation: None,
+                        format: if index == 0 {
+                            BusinessDocumentFormat::Xlsx
+                        } else {
+                            BusinessDocumentFormat::Docx
+                        },
+                        requirement_ids: requirement_ids.clone(),
+                    })
+                    .collect(),
+            },
+            idempotency_key: Uuid::new_v4().to_string(),
+            expected_revision: Some(workspace.revision),
+            deadline_at: None,
+        }
+    }
+
+    fn bind_first_acceptance_template_source(
+        command: &mut BusinessWorkspaceCommandEnvelope,
+        template_key: &str,
+        format: BusinessDocumentFormat,
+        asset_id: String,
+        sha256: String,
+    ) {
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } = command
+        else {
+            unreachable!("acceptance batch helper returned another command")
+        };
+        let output = &mut payload.output_specs[0];
+        output.template_key = template_key.to_string();
+        output.output_code = match template_key {
+            document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+                "contract-settlement".to_string()
+            }
+            document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+                "service-settlement-list".to_string()
+            }
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY => {
+                output.payment_application = Some(BusinessPaymentApplicationInput {
+                    payment_id: Uuid::new_v4().to_string(),
+                    contract_title: "Test contract".to_string(),
+                    contract_number: "TEST-CONTRACT-001".to_string(),
+                    work_summary: "completed test deliverables".to_string(),
+                    payment_period_start: "2026-07-01".to_string(),
+                    payment_period_end: "2026-07-31".to_string(),
+                    settlement_period: "2026-07".to_string(),
+                    payment_sequence: 1,
+                    invoice_amount_cents: 10_000,
+                    cumulative_recognized_amount_cents: 10_000,
+                    withheld_amount_cents: 0,
+                    application_date: "2026-07-29".to_string(),
+                    supplier_bank_routing_number: "102100000001".to_string(),
+                    settlement_items: vec![BusinessPaymentSettlementItemData {
+                        name: "Test service".to_string(),
+                        unit: "item".to_string(),
+                        contract_unit_price_cents: 10_000,
+                        original_quantity_millis: 1_000,
+                        settlement_quantity_millis: 1_000,
+                        remarks: String::new(),
+                    }],
+                });
+                "payment-application-settlement-calculation".to_string()
+            }
+            _ => output.output_code.clone(),
+        };
+        output.format = format;
+        output.template_asset_id = Some(asset_id);
+        output.template_source_sha256 = Some(sha256);
+        output.template_mapping_version =
+            document_engine::expected_template_mapping_version(template_key)
+                .unwrap_or("unexpected-test-map.v1")
+                .to_string();
+    }
+
+    fn asset_sha256(store: &TestStore, asset_id: &str) -> String {
+        store
+            .connection
+            .query_row(
+                "SELECT sha256 FROM assets WHERE id = ?1",
+                [asset_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn video_completion_acceptance_hydration_reads_only_images_and_failures_are_atomic() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let (mut workspace, _) = create_test_document(
+            &mut store,
+            &project_id,
+            workspace,
+            BusinessDocumentKind::Quote,
+            None,
+        );
+        let video_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "delivery.mp4",
+            b"\0\0\0\x18ftypisom\0\0\0\0\0\0\0\0",
+        );
+        let screenshot_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "evidence.png",
+            b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x03",
+        );
+        let video_asset = asset_service::get_asset(&store.connection, &video_asset_id).unwrap();
+        let screenshot_sha256 = asset_sha256(&store, &screenshot_asset_id);
+        let frozen = video_completion_acceptance_data(
+            &video_asset_id,
+            &video_asset.original_name,
+            &video_asset.sha256,
+            &screenshot_asset_id,
+            &screenshot_sha256,
+            true,
+        );
+        let video_requirement_id = Uuid::new_v4().to_string();
+        let screenshot_requirement_id = Uuid::new_v4().to_string();
+        let requirements = vec![
+            BusinessAcceptanceRequirementRecord {
+                id: video_requirement_id.clone(),
+                label: "Final video".to_string(),
+                kind: BusinessAcceptanceMaterialKind::Video,
+                required_group_count: 1,
+            },
+            BusinessAcceptanceRequirementRecord {
+                id: screenshot_requirement_id.clone(),
+                label: "Evidence screenshot".to_string(),
+                kind: BusinessAcceptanceMaterialKind::Screenshot,
+                required_group_count: 1,
+            },
+        ];
+        let output_spec = BusinessAcceptanceOutputSpecRecord {
+            id: Uuid::new_v4().to_string(),
+            output_code: "video-completion-acceptance".to_string(),
+            document_number: "BSE-VIDEO-ACCEPTANCE-001".to_string(),
+            title: "Video completion acceptance".to_string(),
+            template_key: document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY
+                .to_string(),
+            template_asset_id: None,
+            template_source_sha256: None,
+            template_mapping_version: document_engine::expected_template_mapping_version(
+                document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY,
+            )
+            .unwrap()
+            .to_string(),
+            contract_settlement: None,
+            service_settlement_items: Vec::new(),
+            payment_application: None,
+            video_completion_acceptance: Some(frozen.clone()),
+            production_result_confirmation: None,
+            format: BusinessDocumentFormat::Docx,
+            requirement_ids: vec![
+                video_requirement_id.clone(),
+                screenshot_requirement_id.clone(),
+            ],
+        };
+        let batch_id = Uuid::new_v4().to_string();
+        store
+            .connection
+            .execute(
+                "INSERT INTO business_acceptance_batches
+                 (id, workspace_id, label, requirements_json, output_specs_json,
+                  revision, created_at, updated_at)
+                 VALUES (?1, ?2, 'video acceptance', ?3, ?4, 1, 10, 10)",
+                params![
+                    batch_id,
+                    workspace.id,
+                    serde_json::to_string(&requirements).unwrap(),
+                    serde_json::to_string(&vec![output_spec.clone()]).unwrap(),
+                ],
+            )
+            .unwrap();
+        for (requirement_id, asset_id, kind, created_at) in [
+            (
+                video_requirement_id.as_str(),
+                video_asset_id.as_str(),
+                "video",
+                11_i64,
+            ),
+            (
+                screenshot_requirement_id.as_str(),
+                screenshot_asset_id.as_str(),
+                "screenshot",
+                12_i64,
+            ),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO business_acceptance_materials
+                     (id, workspace_id, batch_id, requirement_id, asset_id, kind,
+                      group_key, confirmed, duplicate_of_material_id, notes,
+                      revision, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6,
+                             'delivery-group-1', 1, NULL, '', 1, ?7, ?7)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        workspace.id,
+                        batch_id,
+                        requirement_id,
+                        asset_id,
+                        kind,
+                        created_at,
+                    ],
+                )
+                .unwrap();
+        }
+        let material_bindings =
+            load_acceptance_material_bindings(&store.connection, &project_id, &batch_id).unwrap();
+        let batch = BusinessAcceptanceBatchRecord {
+            id: batch_id.clone(),
+            workspace_id: workspace.id.clone(),
+            label: "video acceptance".to_string(),
+            requirements,
+            output_specs: vec![output_spec.clone()],
+            materials: Vec::new(),
+            readiness: BusinessAcceptanceReadiness {
+                is_ready: true,
+                blockers: Vec::new(),
+            },
+            document_ids: Vec::new(),
+            status: BusinessAcceptanceBatchStatus::DocumentsPrepared,
+            revision: 1,
+            created_at: 10,
+            updated_at: 10,
+        };
+        workspace.acceptance_batches.push(batch);
+        let mut document = workspace.documents[0].clone();
+        document.kind = BusinessDocumentKind::Acceptance;
+        document.template_key =
+            document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY.to_string();
+        document.snapshot.acceptance_batch_id = Some(batch_id);
+        document.snapshot.acceptance_output_spec_id = Some(output_spec.id.clone());
+        document.snapshot.acceptance_batch_revision = Some(1);
+        document.snapshot.material_bindings = material_bindings;
+        document.snapshot.video_completion_acceptance = Some(frozen.clone());
+
+        let hydrated = load_video_completion_acceptance_generation_data(
+            &store.connection,
+            &store.vault_root,
+            &project_id,
+            &workspace,
+            &document,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(hydrated.delivery_groups.len(), 1);
+        assert_eq!(hydrated.delivery_groups[0].videos.len(), 1);
+        let hydrated_video = &hydrated.delivery_groups[0].videos[0];
+        assert_eq!(hydrated_video.asset_reference.asset_id, video_asset_id);
+        assert_eq!(hydrated_video.screenshots[0].image_bytes.len(), 24);
+        assert_eq!(hydrated_video.screenshots[0].mime_type, "image/png");
+        assert_eq!(hydrated_video.screenshots[0].width_px, 2);
+        assert_eq!(hydrated_video.screenshots[0].height_px, 3);
+
+        let persisted_before = load_workspace(&store.connection, &workspace.id).unwrap();
+        let assets_before =
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap();
+        let mut unconfirmed_workspace = workspace.clone();
+        let mut unconfirmed_document = document.clone();
+        let mut unconfirmed = frozen;
+        unconfirmed.manually_confirmed = false;
+        unconfirmed_workspace.acceptance_batches[0].output_specs[0].video_completion_acceptance =
+            Some(unconfirmed.clone());
+        unconfirmed_document.snapshot.video_completion_acceptance = Some(unconfirmed);
+        let error = load_video_completion_acceptance_generation_data(
+            &store.connection,
+            &store.vault_root,
+            &project_id,
+            &unconfirmed_workspace,
+            &unconfirmed_document,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            "BUSINESS_VIDEO_COMPLETION_ACCEPTANCE_CONFIRMATION_REQUIRED"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            persisted_before
+        );
+        assert_eq!(
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap(),
+            assets_before
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the local registered Baietan DOCX template and three real script DOCX fixtures"]
+    fn production_result_confirmation_hydrates_real_60_assets_generates_docx_and_rejects_stale_or_mismatched_state_atomically(
+    ) {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let mut workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+        let template_source_path =
+            external_qa_fixture("templates/synthetic-production-confirmation.docx");
+        if !template_source_path.is_file() {
+            eprintln!(
+                "external QA fixture unavailable; set BSAIGC_EXTERNAL_QA_FIXTURE_ROOT to run this ignored regression"
+            );
+            return;
+        }
+        let template_source = fs::read(&template_source_path).unwrap();
+        let template_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            &template_source_path.file_name().unwrap().to_string_lossy(),
+            &template_source,
+        );
+        let template_source_sha256 = asset_sha256(&store, &template_asset_id);
+        assert!(template_source_sha256.eq_ignore_ascii_case(
+            document_engine::expected_template_source_sha256(
+                document_engine::BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY,
+            )
+            .unwrap()
+        ));
+
+        let requirement_id = Uuid::new_v4().to_string();
+        let mut frozen = production_result_confirmation_data();
+        let storyboards = std::mem::take(&mut frozen.delivery_items[0].storyboards);
+        let evidence_labels = [
+            "合成宣传片 A",
+            "合成宣传片 B",
+            "合成品牌片 A",
+            "合成品牌片 B",
+            "合成 AIGC 视频 A",
+            "合成 AIGC 视频 B",
+        ];
+        let evidence_references = evidence_labels
+            .iter()
+            .enumerate()
+            .map(
+                |(index, label)| BusinessProductionResultConfirmationAssetReference {
+                    asset_id: Uuid::new_v4().to_string(),
+                    sha256: "A".repeat(64),
+                    group_key: format!("delivery-evidence-{index}"),
+                    file_name: format!("delivery-evidence-{index}.jpg"),
+                    caption: (*label).to_string(),
+                },
+            )
+            .collect::<Vec<_>>();
+        frozen.delivery_items = vec![
+            BusinessProductionResultConfirmationDeliveryItem {
+                item_key: "production-delivery-long-film".to_string(),
+                title: "长视频：合成宣传片 A、合成宣传片 B".to_string(),
+                deliverable_summary:
+                    "形象宣传片 30-60s，含创意策划、拍摄、剪辑、动画、演员、场地、道具和配音"
+                        .to_string(),
+                evidence_images: evidence_references[0..2].to_vec(),
+                storyboards,
+            },
+            BusinessProductionResultConfirmationDeliveryItem {
+                item_key: "production-delivery-brand-film".to_string(),
+                title: "品牌类短视频：合成品牌片 A、合成品牌片 B".to_string(),
+                deliverable_summary:
+                    "轻量级品牌调性片 30-60s，含创意策划、脚本、拍摄、剪辑、花字、演员和配音"
+                        .to_string(),
+                evidence_images: evidence_references[2..4].to_vec(),
+                storyboards: Vec::new(),
+            },
+            BusinessProductionResultConfirmationDeliveryItem {
+                item_key: "production-delivery-aigc-film".to_string(),
+                title: "AIGC 类：合成 AIGC 视频 A、合成 AIGC 视频 B".to_string(),
+                deliverable_summary:
+                    "AIGC 创意广告视频 30-60s，含脚本、分镜、效果渲染、剪辑、平面设计和配音"
+                        .to_string(),
+                evidence_images: evidence_references[4..6].to_vec(),
+                storyboards: Vec::new(),
+            },
+        ];
+        let registered_images = registered_production_result_images();
+        let mut material_rows = Vec::new();
+        let mut expected_images = Vec::new();
+        let mut next_registered_image = 0_usize;
+        let mut bind_reference =
+            |reference: &mut BusinessProductionResultConfirmationAssetReference| {
+                let registered = &registered_images[next_registered_image];
+                next_registered_image += 1;
+                let asset_id = import_test_asset(
+                    &mut store,
+                    &project_id,
+                    &registered.file_name,
+                    &registered.bytes,
+                );
+                let asset = asset_service::get_asset(&store.connection, &asset_id).unwrap();
+                assert_eq!(asset.mime_type, registered.mime_type);
+                reference.asset_id = asset.id.clone();
+                reference.sha256 = asset.sha256.clone();
+                reference.file_name = asset.original_name.clone();
+                material_rows.push((asset.id, reference.group_key.clone()));
+                expected_images.push((
+                    reference.asset_id.clone(),
+                    reference.sha256.clone(),
+                    reference.file_name.clone(),
+                    asset.mime_type,
+                    registered.width_px,
+                    registered.height_px,
+                    registered.bytes.clone(),
+                ));
+            };
+        for reference in frozen
+            .delivery_items
+            .iter_mut()
+            .flat_map(|item| item.evidence_images.iter_mut())
+        {
+            bind_reference(reference);
+        }
+        for reference in frozen
+            .delivery_items
+            .iter_mut()
+            .flat_map(|item| item.storyboards.iter_mut())
+            .flat_map(|storyboard| storyboard.shots.iter_mut())
+            .flat_map(|shot| shot.images.iter_mut())
+        {
+            bind_reference(reference);
+        }
+        assert_eq!(next_registered_image, 60);
+
+        let output_spec_id = Uuid::new_v4().to_string();
+        let mut create_batch = create_acceptance_batch_command(&project_id, &workspace);
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } =
+            &mut create_batch
+        else {
+            unreachable!("acceptance batch helper returned another command")
+        };
+        payload.label = "production result confirmation".to_string();
+        payload.requirements = vec![BusinessAcceptanceRequirementInput {
+            id: Some(requirement_id.clone()),
+            label: "Storyboard evidence images".to_string(),
+            kind: BusinessAcceptanceMaterialKind::Screenshot,
+            required_group_count: 60,
+        }];
+        payload.output_specs = vec![BusinessAcceptanceOutputSpecInput {
+            id: Some(output_spec_id.clone()),
+            output_code: "production-result-confirmation".to_string(),
+            document_number: "BSE-PRODUCTION-RESULT-001".to_string(),
+            title: "Production result confirmation".to_string(),
+            template_key: document_engine::BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY
+                .to_string(),
+            template_asset_id: Some(template_asset_id),
+            template_source_sha256: Some(template_source_sha256),
+            template_mapping_version: document_engine::expected_template_mapping_version(
+                document_engine::BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY,
+            )
+            .unwrap()
+            .to_string(),
+            contract_settlement: None,
+            service_settlement_items: Vec::new(),
+            payment_application: None,
+            video_completion_acceptance: None,
+            production_result_confirmation: Some(frozen.clone()),
+            format: BusinessDocumentFormat::Docx,
+            requirement_ids: vec![requirement_id.clone()],
+        }];
+        workspace = store.execute(create_batch).response.business_workspace;
+        let batch_id = workspace
+            .acceptance_batches
+            .iter()
+            .find(|batch| {
+                batch
+                    .output_specs
+                    .iter()
+                    .any(|output| output.id == output_spec_id)
+            })
+            .expect("created production result acceptance batch")
+            .id
+            .clone();
+        assert_eq!(
+            workspace
+                .acceptance_batches
+                .iter()
+                .find(|batch| batch.id == batch_id)
+                .unwrap()
+                .revision,
+            1
+        );
+
+        for (asset_id, group_key) in material_rows {
+            let previous_workspace_revision = workspace.revision;
+            workspace = store
+                .execute(upsert_acceptance_material_command(
+                    &project_id,
+                    &workspace,
+                    &batch_id,
+                    BusinessAcceptanceMaterialInput {
+                        id: None,
+                        requirement_id: requirement_id.clone(),
+                        asset_id,
+                        kind: BusinessAcceptanceMaterialKind::Screenshot,
+                        group_key,
+                        confirmed: true,
+                        duplicate_of_material_id: None,
+                        notes: String::new(),
+                    },
+                ))
+                .response
+                .business_workspace;
+            assert_eq!(workspace.revision, previous_workspace_revision + 1);
+        }
+        let batch_before_prepare = workspace
+            .acceptance_batches
+            .iter()
+            .find(|batch| batch.id == batch_id)
+            .unwrap()
+            .clone();
+        assert_eq!(batch_before_prepare.materials.len(), 60);
+        assert!(batch_before_prepare.readiness.is_ready);
+        assert_eq!(batch_before_prepare.revision, 61);
+
+        workspace = store
+            .execute(prepare_acceptance_documents_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+            ))
+            .response
+            .business_workspace;
+        let batch = workspace
+            .acceptance_batches
+            .iter()
+            .find(|batch| batch.id == batch_id)
+            .unwrap()
+            .clone();
+        assert_eq!(
+            batch.status,
+            BusinessAcceptanceBatchStatus::DocumentsPrepared
+        );
+        assert_eq!(batch.revision, batch_before_prepare.revision);
+        let document = workspace
+            .documents
+            .iter()
+            .find(|document| {
+                document.snapshot.acceptance_batch_id.as_deref() == Some(batch_id.as_str())
+                    && document.snapshot.acceptance_output_spec_id.as_deref()
+                        == Some(output_spec_id.as_str())
+            })
+            .expect("prepared production result confirmation document")
+            .clone();
+        assert_eq!(document.status, BusinessDocumentStatus::Draft);
+        assert_eq!(
+            document.snapshot.acceptance_batch_revision,
+            Some(batch.revision)
+        );
+        assert_eq!(document.snapshot.material_bindings.len(), 60);
+        let frozen_snapshot = document
+            .snapshot
+            .production_result_confirmation
+            .as_ref()
+            .unwrap();
+        assert_eq!(frozen_snapshot.delivery_items.len(), 3);
+        assert_eq!(
+            frozen_snapshot
+                .delivery_items
+                .iter()
+                .map(|item| item.evidence_images.len())
+                .sum::<usize>(),
+            6
+        );
+        assert_eq!(
+            frozen_snapshot
+                .delivery_items
+                .iter()
+                .flat_map(|item| item.storyboards.iter())
+                .count(),
+            4
+        );
+        assert_eq!(
+            frozen_snapshot
+                .delivery_items
+                .iter()
+                .flat_map(|item| item.storyboards.iter())
+                .flat_map(|storyboard| storyboard.shots.iter())
+                .count(),
+            54
+        );
+
+        let hydrated = load_production_result_confirmation_generation_data(
+            &store.connection,
+            &store.vault_root,
+            &project_id,
+            &workspace,
+            &document,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(hydrated.storyboards.len(), 4);
+        let hydrated_images = hydrated
+            .delivery_items
+            .iter()
+            .flat_map(|item| item.images.iter())
+            .chain(
+                hydrated
+                    .storyboards
+                    .iter()
+                    .flat_map(|storyboard| storyboard.shots.iter())
+                    .flat_map(|shot| shot.images.iter()),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            hydrated
+                .storyboards
+                .iter()
+                .flat_map(|storyboard| storyboard.shots.iter())
+                .count(),
+            54
+        );
+        assert_eq!(expected_images.len(), 60);
+        assert_eq!(hydrated_images.len(), expected_images.len());
+        let expected_asset_ids = expected_images
+            .iter()
+            .map(|(asset_id, ..)| asset_id.clone())
+            .collect::<HashSet<_>>();
+        let hydrated_asset_ids = hydrated_images
+            .iter()
+            .map(|image| image.asset_id.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(expected_asset_ids.len(), expected_images.len());
+        assert_eq!(hydrated_asset_ids, expected_asset_ids);
+        for (
+            expected_asset_id,
+            expected_sha256,
+            expected_file_name,
+            expected_mime_type,
+            expected_width_px,
+            expected_height_px,
+            expected_bytes,
+        ) in &expected_images
+        {
+            let matching_images = hydrated_images
+                .iter()
+                .filter(|image| image.asset_id == *expected_asset_id)
+                .copied()
+                .collect::<Vec<_>>();
+            assert_eq!(matching_images.len(), 1, "{expected_file_name}");
+            let image = matching_images[0];
+            assert!(
+                image.sha256.eq_ignore_ascii_case(expected_sha256),
+                "{expected_file_name}"
+            );
+            assert_eq!(&image.mime_type, expected_mime_type, "{expected_file_name}");
+            assert_eq!(image.width_px, *expected_width_px, "{expected_file_name}");
+            assert_eq!(image.height_px, *expected_height_px, "{expected_file_name}");
+            assert_eq!(&image.image_bytes, expected_bytes, "{expected_file_name}");
+        }
+
+        let document_id = document.id.clone();
+        for status in [
+            BusinessDocumentStatus::InReview,
+            BusinessDocumentStatus::Approved,
+        ] {
+            workspace = store
+                .execute(status_command(
+                    &project_id,
+                    &workspace,
+                    &document_id,
+                    status,
+                ))
+                .response
+                .business_workspace;
+        }
+        let assets_before_generation =
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap();
+        let asset_ids_before_generation = assets_before_generation
+            .iter()
+            .map(|asset| asset.id.clone())
+            .collect::<HashSet<_>>();
+        workspace = store
+            .execute(BusinessWorkspaceCommandEnvelope::GenerateDocument {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: GenerateBusinessDocumentPayload {
+                    workspace_id: workspace.id.clone(),
+                    document_id: document_id.clone(),
+                    format: BusinessDocumentFormat::Docx,
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            })
+            .response
+            .business_workspace;
+        let document = workspace
+            .documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .expect("generated production result confirmation document")
+            .clone();
+        assert_eq!(document.status, BusinessDocumentStatus::Generated);
+        assert_eq!(document.output_format, Some(BusinessDocumentFormat::Docx));
+        let output_asset_id = document.output_asset_id.clone().unwrap();
+        let assets_after_generation =
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap();
+        let generated_assets = assets_after_generation
+            .iter()
+            .filter(|asset| !asset_ids_before_generation.contains(&asset.id))
+            .collect::<Vec<_>>();
+        assert_eq!(generated_assets.len(), 1);
+        assert_eq!(generated_assets[0].id, output_asset_id);
+        let (output_asset, output_path) = asset_service::verify_ready_asset_integrity(
+            &store.connection,
+            &store.vault_root,
+            &output_asset_id,
+        )
+        .unwrap();
+        assert_eq!(
+            output_asset.project_id.as_deref(),
+            Some(project_id.as_str())
+        );
+        assert_eq!(output_asset.kind, AssetKind::Document);
+        assert!(output_asset.original_name.ends_with(".docx"));
+        assert!(output_path.starts_with(fs::canonicalize(&store.vault_root).unwrap()));
+        let output_source =
+            asset_service::get_asset_source(&store.connection, &output_asset_id).unwrap();
+        assert_eq!(
+            output_source.source,
+            asset_service::AssetSourceKind::BusinessDocument
+        );
+        let linked_document_count: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM business_documents WHERE output_asset_id = ?1",
+                [&output_asset_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked_document_count, 1);
+        let mut generated_archive = ZipArchive::new(File::open(output_path).unwrap()).unwrap();
+        let generated_media = (0..generated_archive.len())
+            .filter(|index| {
+                generated_archive
+                    .by_index(*index)
+                    .map(|entry| !entry.is_dir() && entry.name().starts_with("word/media/"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(generated_media, 60);
+        drop(generated_archive);
+
+        let vault_snapshot = |vault_root: &Path| {
+            let mut pending_directories = vec![vault_root.to_path_buf()];
+            let mut files = Vec::new();
+            while let Some(directory) = pending_directories.pop() {
+                for entry in fs::read_dir(&directory).unwrap() {
+                    let entry = entry.unwrap();
+                    let path = entry.path();
+                    if entry.file_type().unwrap().is_dir() {
+                        pending_directories.push(path);
+                    } else {
+                        files.push((
+                            path.strip_prefix(vault_root).unwrap().to_path_buf(),
+                            fs::read(path).unwrap(),
+                        ));
+                    }
+                }
+            }
+            files.sort_by(|left, right| left.0.cmp(&right.0));
+            files
+        };
+
+        let mut unconfirmed_workspace = workspace.clone();
+        let mut unconfirmed_document = document.clone();
+        let mut unconfirmed = frozen.clone();
+        unconfirmed.manually_confirmed = false;
+        unconfirmed_workspace.acceptance_batches[0].output_specs[0]
+            .production_result_confirmation = Some(unconfirmed.clone());
+        unconfirmed_document.snapshot.production_result_confirmation = Some(unconfirmed);
+        let unconfirmed_workspace_before =
+            load_workspace(&store.connection, &workspace.id).unwrap();
+        let unconfirmed_assets_before =
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap();
+        let unconfirmed_database_before = fs::read(&store.database_path).unwrap();
+        let unconfirmed_vault_before = vault_snapshot(&store.vault_root);
+        let error = load_production_result_confirmation_generation_data(
+            &store.connection,
+            &store.vault_root,
+            &project_id,
+            &unconfirmed_workspace,
+            &unconfirmed_document,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_CONFIRMATION_REQUIRED"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            unconfirmed_workspace_before
+        );
+        assert_eq!(
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap(),
+            unconfirmed_assets_before
+        );
+        assert_eq!(
+            fs::read(&store.database_path).unwrap(),
+            unconfirmed_database_before
+        );
+        assert_eq!(vault_snapshot(&store.vault_root), unconfirmed_vault_before);
+
+        let mut stale_document = document.clone();
+        stale_document.snapshot.acceptance_batch_revision = Some(batch.revision + 1);
+        let stale_workspace_before = load_workspace(&store.connection, &workspace.id).unwrap();
+        let stale_assets_before =
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap();
+        let stale_database_before = fs::read(&store.database_path).unwrap();
+        let stale_vault_before = vault_snapshot(&store.vault_root);
+        let error = load_production_result_confirmation_generation_data(
+            &store.connection,
+            &store.vault_root,
+            &project_id,
+            &workspace,
+            &stale_document,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_SNAPSHOT_STALE"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            stale_workspace_before
+        );
+        assert_eq!(
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap(),
+            stale_assets_before
+        );
+        assert_eq!(
+            fs::read(&store.database_path).unwrap(),
+            stale_database_before
+        );
+        assert_eq!(vault_snapshot(&store.vault_root), stale_vault_before);
+
+        let mut mismatched_workspace = workspace.clone();
+        let mut mismatched_document = document.clone();
+        let mut mismatched = frozen;
+        mismatched.delivery_items[0].storyboards[0].shots[0].images[0]
+            .group_key
+            .push_str("-mismatch");
+        mismatched_workspace.acceptance_batches[0].output_specs[0].production_result_confirmation =
+            Some(mismatched.clone());
+        mismatched_document.snapshot.production_result_confirmation = Some(mismatched);
+        let mismatched_workspace_before = load_workspace(&store.connection, &workspace.id).unwrap();
+        let mismatched_assets_before =
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap();
+        let mismatched_database_before = fs::read(&store.database_path).unwrap();
+        let mismatched_vault_before = vault_snapshot(&store.vault_root);
+        let error = load_production_result_confirmation_generation_data(
+            &store.connection,
+            &store.vault_root,
+            &project_id,
+            &mismatched_workspace,
+            &mismatched_document,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            "BUSINESS_PRODUCTION_RESULT_CONFIRMATION_MATERIAL_MISMATCH"
+        );
+
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            mismatched_workspace_before
+        );
+        assert_eq!(
+            asset_service::list_assets(&store.connection, Some(&project_id)).unwrap(),
+            mismatched_assets_before
+        );
+        assert_eq!(
+            fs::read(&store.database_path).unwrap(),
+            mismatched_database_before
+        );
+        assert_eq!(vault_snapshot(&store.vault_root), mismatched_vault_before);
+    }
+
+    fn empty_ooxml_package() -> &'static [u8] {
+        b"PK\x05\x06\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+    }
+
+    fn payment_application_currentness_fixture() -> (BusinessWorkspaceRecord, BusinessDocumentRecord)
+    {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+        let contract_cents = workspace.financial_summary.contract_cents;
+        let workspace = upsert_test_payment(
+            &mut store,
+            &project_id,
+            workspace,
+            None,
+            contract_cents,
+            BusinessPaymentStatus::Planned,
+            None,
+            "PAYMENT-CURRENTNESS-PLAN",
+            "payment currentness fixture",
+        );
+        let payment = workspace.payments[0].clone();
+        let payment_application = freeze_payment_application_data(
+            &workspace,
+            &BusinessPaymentApplicationInput {
+                payment_id: payment.id.clone(),
+                contract_title: "Currentness test contract".to_string(),
+                contract_number: "CURRENTNESS-2026-001".to_string(),
+                work_summary: "completed currentness test deliverables".to_string(),
+                payment_period_start: "2026-07-01".to_string(),
+                payment_period_end: "2026-07-31".to_string(),
+                settlement_period: "2026-07".to_string(),
+                payment_sequence: 1,
+                invoice_amount_cents: contract_cents,
+                cumulative_recognized_amount_cents: contract_cents,
+                withheld_amount_cents: 0,
+                application_date: "2026-07-29".to_string(),
+                supplier_bank_routing_number: "102100000001".to_string(),
+                settlement_items: vec![BusinessPaymentSettlementItemData {
+                    name: "Production service".to_string(),
+                    unit: "item".to_string(),
+                    contract_unit_price_cents: contract_cents,
+                    original_quantity_millis: 1_000,
+                    settlement_quantity_millis: 1_000,
+                    remarks: String::new(),
+                }],
+            },
+        )
+        .unwrap();
+        let document = BusinessDocumentRecord {
+            id: Uuid::new_v4().to_string(),
+            kind: BusinessDocumentKind::Acceptance,
+            sequence_number: 1,
+            document_number: "PAYMENT-CURRENTNESS-1".to_string(),
+            title: "Payment application currentness".to_string(),
+            template_key:
+                document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+                    .to_string(),
+            status: BusinessDocumentStatus::Approved,
+            snapshot: BusinessDocumentSnapshot {
+                workspace_revision: workspace.revision,
+                acceptance_batch_id: None,
+                acceptance_output_spec_id: None,
+                acceptance_batch_revision: None,
+                material_bindings: Vec::new(),
+                template_asset_id: None,
+                template_source_sha256: None,
+                template_mapping_version: String::new(),
+                contract_settlement: None,
+                service_settlement_items: Vec::new(),
+                payment_application: Some(payment_application),
+                video_completion_acceptance: None,
+                production_result_confirmation: None,
+                customer_id: workspace.customer_id.clone(),
+                customer: workspace.customer.clone(),
+                profile: workspace.profile.clone(),
+                payment: Some(payment),
+            },
+            output_asset_id: None,
+            output_format: None,
+            source_asset_id: None,
+            review_id: None,
+            report_asset_id: None,
+            evidence: None,
+            manual_waiver: None,
+            voided_at: None,
+            voided_by: None,
+            void_reason: String::new(),
+            approved_at: Some(1),
+            approved_by: Some("reviewer".to_string()),
+            generated_at: None,
+            revision: 1,
+            created_at: 1,
+            updated_at: 1,
+        };
+        (workspace, document)
+    }
+
+    fn payment_currentness_invoice(
+        payment_id: &str,
+        kind: BusinessInvoiceKind,
+        amount_cents: i64,
+        original_invoice_id: Option<String>,
+    ) -> crate::protocol::BusinessInvoiceRecord {
+        crate::protocol::BusinessInvoiceRecord {
+            id: Uuid::new_v4().to_string(),
+            payment_id: Some(payment_id.to_string()),
+            kind,
+            status: crate::protocol::BusinessInvoiceStatus::Issued,
+            invoice_code: "CURRENTNESS".to_string(),
+            invoice_number: format!("INV-{}", Uuid::new_v4().simple()),
+            issuer_tax_id: "SUPPLIER-TAX-001".to_string(),
+            buyer_tax_id: "CUSTOMER-TAX-001".to_string(),
+            currency: "CNY".to_string(),
+            amount_cents,
+            tax_cents: 0,
+            issued_at: 1_900_000_000_000,
+            original_invoice_id,
+            reversal_reason: String::new(),
+            artifacts: Vec::new(),
+            recorded_by: "operator-local".to_string(),
+            created_at: 1_900_000_000_000,
+        }
+    }
+
+    fn prepare_acceptance_documents_command(
+        project_id: &str,
+        workspace: &BusinessWorkspaceRecord,
+        batch_id: &str,
+    ) -> BusinessWorkspaceCommandEnvelope {
+        BusinessWorkspaceCommandEnvelope::PrepareAcceptanceDocuments {
+            command_id: Uuid::new_v4().to_string(),
+            protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+            context: context(project_id),
+            payload: PrepareBusinessAcceptanceDocumentsPayload {
+                workspace_id: workspace.id.clone(),
+                batch_id: batch_id.to_string(),
+            },
+            idempotency_key: Uuid::new_v4().to_string(),
+            expected_revision: Some(workspace.revision),
+            deadline_at: None,
+        }
+    }
+
+    fn upsert_acceptance_material_command(
+        project_id: &str,
+        workspace: &BusinessWorkspaceRecord,
+        batch_id: &str,
+        material: BusinessAcceptanceMaterialInput,
+    ) -> BusinessWorkspaceCommandEnvelope {
+        BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial {
+            command_id: Uuid::new_v4().to_string(),
+            protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+            context: context(project_id),
+            payload: UpsertBusinessAcceptanceMaterialPayload {
+                workspace_id: workspace.id.clone(),
+                batch_id: batch_id.to_string(),
+                material,
+            },
+            idempotency_key: Uuid::new_v4().to_string(),
+            expected_revision: Some(workspace.revision),
+            deadline_at: None,
+        }
+    }
+
+    struct AcceptanceMaterialSpec<'a> {
+        requirement_id: &'a str,
+        kind: BusinessAcceptanceMaterialKind,
+        group_key: &'a str,
+        confirmed: bool,
+        duplicate_of_material_id: Option<String>,
+    }
+
+    fn add_acceptance_material(
+        store: &mut TestStore,
+        project_id: &str,
+        workspace: BusinessWorkspaceRecord,
+        batch_id: &str,
+        material: AcceptanceMaterialSpec<'_>,
+    ) -> (BusinessWorkspaceRecord, String, String) {
+        let (extension, bytes): (&str, &[u8]) = match material.kind {
+            BusinessAcceptanceMaterialKind::Video => ("mp4", b"\0\0\0\x18ftypisom\0\0\0\0\0\0\0\0"),
+            BusinessAcceptanceMaterialKind::Screenshot
+            | BusinessAcceptanceMaterialKind::BehindTheScenes => {
+                ("png", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x03")
+            }
+            BusinessAcceptanceMaterialKind::Script
+            | BusinessAcceptanceMaterialKind::Invoice
+            | BusinessAcceptanceMaterialKind::PublishingData
+            | BusinessAcceptanceMaterialKind::Proof => ("pdf", b"%PDF-1.4 acceptance material"),
+            BusinessAcceptanceMaterialKind::Other => ("bin", b"acceptance material"),
+        };
+        let asset_id = import_test_asset(
+            store,
+            project_id,
+            &format!("{}.{}", material.group_key, extension),
+            bytes,
+        );
+        let command = upsert_acceptance_material_command(
+            project_id,
+            &workspace,
+            batch_id,
+            BusinessAcceptanceMaterialInput {
+                id: None,
+                requirement_id: material.requirement_id.to_string(),
+                asset_id: asset_id.clone(),
+                kind: material.kind,
+                group_key: material.group_key.to_string(),
+                confirmed: material.confirmed,
+                duplicate_of_material_id: material.duplicate_of_material_id,
+                notes: String::new(),
+            },
+        );
+        let workspace = store.execute(command).response.business_workspace;
+        let material_id = workspace
+            .acceptance_batches
+            .iter()
+            .find(|batch| batch.id == batch_id)
+            .and_then(|batch| {
+                batch
+                    .materials
+                    .iter()
+                    .find(|material| material.asset_id == asset_id)
+            })
+            .expect("inserted acceptance material")
+            .id
+            .clone();
+        (workspace, material_id, asset_id)
+    }
+
+    fn generate_real_settlement_document(
+        store: &mut TestStore,
+        project_id: &str,
+        mut workspace: BusinessWorkspaceRecord,
+        source: &Path,
+        template_key: &str,
+        format: BusinessDocumentFormat,
+    ) -> BusinessWorkspaceRecord {
+        let template_asset_id = import_test_asset(
+            store,
+            project_id,
+            &source.file_name().unwrap().to_string_lossy(),
+            &fs::read(source).unwrap(),
+        );
+        let template_sha256 = asset_sha256(store, &template_asset_id);
+        let mut command = create_acceptance_batch_command(project_id, &workspace);
+        {
+            let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } =
+                &mut command
+            else {
+                unreachable!()
+            };
+            payload.requirements.truncate(1);
+            payload.requirements[0].required_group_count = 1;
+            let requirement_id = payload.requirements[0].id.clone().unwrap();
+            payload.output_specs.truncate(1);
+            payload.output_specs[0].requirement_ids = vec![requirement_id];
+            payload.output_specs[0].document_number = match template_key {
+                document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+                    "REAL-CONTRACT-SETTLEMENT"
+                }
+                document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+                    "REAL-SERVICE-SETTLEMENT"
+                }
+                _ => unreachable!(),
+            }
+            .to_string();
+        }
+        bind_first_acceptance_template_source(
+            &mut command,
+            template_key,
+            format.clone(),
+            template_asset_id,
+            template_sha256,
+        );
+        {
+            let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } =
+                &mut command
+            else {
+                unreachable!()
+            };
+            let output = &mut payload.output_specs[0];
+            match template_key {
+                document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+                    output.contract_settlement = Some(BusinessContractSettlementData {
+                        contract_title: "White Goose Pond service contract".to_string(),
+                        contract_number: "BSE-2026-001".to_string(),
+                        original_contract_amount_cents: 8_480_000,
+                        contract_adjustment_cents: -490_000,
+                        retention_rate_bps: Some(500),
+                        final_settlement_amount_cents: 7_990_000,
+                    });
+                }
+                document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+                    output.service_settlement_items = vec![BusinessServiceSettlementItemData {
+                        service_name: "Video production".to_string(),
+                        period: "2026-07".to_string(),
+                        description: "Master video and channel cutdowns".to_string(),
+                        provided_as_required: Some(true),
+                        evidence_label: "Acceptance evidence group 1".to_string(),
+                        remarks: String::new(),
+                    }];
+                }
+                _ => unreachable!(),
+            }
+        }
+        workspace = store.execute(command).response.business_workspace;
+        let batch = workspace.acceptance_batches.last().unwrap().clone();
+        let requirement = batch.requirements[0].clone();
+        workspace = add_acceptance_material(
+            store,
+            project_id,
+            workspace,
+            &batch.id,
+            AcceptanceMaterialSpec {
+                requirement_id: &requirement.id,
+                kind: requirement.kind,
+                group_key: "real-settlement-evidence",
+                confirmed: true,
+                duplicate_of_material_id: None,
+            },
+        )
+        .0;
+        workspace = store
+            .execute(prepare_acceptance_documents_command(
+                project_id, &workspace, &batch.id,
+            ))
+            .response
+            .business_workspace;
+        let document_id = workspace
+            .documents
+            .iter()
+            .find(|document| {
+                document.snapshot.acceptance_batch_id.as_deref() == Some(batch.id.as_str())
+            })
+            .unwrap()
+            .id
+            .clone();
+        for status in [
+            BusinessDocumentStatus::InReview,
+            BusinessDocumentStatus::Approved,
+        ] {
+            workspace = store
+                .execute(status_command(project_id, &workspace, &document_id, status))
+                .response
+                .business_workspace;
+        }
+        workspace = store
+            .execute(BusinessWorkspaceCommandEnvelope::GenerateDocument {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(project_id),
+                payload: GenerateBusinessDocumentPayload {
+                    workspace_id: workspace.id.clone(),
+                    document_id: document_id.clone(),
+                    format,
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            })
+            .response
+            .business_workspace;
+        let output_asset_id = workspace
+            .documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap()
+            .output_asset_id
+            .as_deref()
+            .unwrap();
+        let (asset, output_path) = asset_service::verify_ready_asset_integrity(
+            &store.connection,
+            &store.vault_root,
+            output_asset_id,
+        )
+        .unwrap();
+        assert_eq!(asset.project_id.as_deref(), Some(project_id));
+        assert!(fs::read(output_path).unwrap().starts_with(b"PK"));
+        workspace
+    }
+
     fn prepare_test_business_closure_ready(
         store: &mut TestStore,
         project_id: &str,
@@ -8106,6 +14792,1586 @@ mod tests {
             count("business_workspace_events"),
             count("business_workspace_command_receipts"),
         )
+    }
+
+    #[test]
+    fn independent_acceptance_promotes_external_reviewed_contract_without_system_quote() {
+        let mut store = TestStore::new();
+        contract_review_service::migrate(&store.connection).unwrap();
+        let project_id = store.project_id.clone();
+        let mut workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        workspace = store
+            .execute(update_profile_command(
+                &project_id,
+                &workspace,
+                complete_profile_input(&workspace.profile),
+            ))
+            .response
+            .business_workspace;
+        assert!(workspace.current_documents.quote_document_id.is_none());
+        assert!(!workspace
+            .documents
+            .iter()
+            .any(|document| document.kind == BusinessDocumentKind::Quote));
+
+        let source_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "external-reviewed-contract.pdf",
+            b"%PDF-1.4 external reviewed contract",
+        );
+        let report_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "external-contract-review.html",
+            b"<html><body>external contract review completed</body></html>",
+        );
+        let source_sha256 = asset_sha256(&store, &source_asset_id);
+        let report_sha256 = asset_sha256(&store, &report_asset_id);
+        let review_id = Uuid::new_v4().to_string();
+        let report_id = Uuid::new_v4().to_string();
+        let extraction_id = Uuid::new_v4().to_string();
+        let report = serde_json::json!({
+            "id": report_id,
+            "reviewId": review_id,
+            "reviewRevision": 1,
+            "sourceAssetId": source_asset_id,
+            "sourceAssetSha256": source_sha256,
+            "extractionId": extraction_id,
+            "ruleSetVersion": "external-reviewed-contract.v1",
+            "agentRunIds": [],
+            "format": "html",
+            "reportAssetId": report_asset_id,
+            "reportAssetSha256": report_sha256,
+            "generatedAt": 1
+        });
+        store
+            .connection
+            .execute(
+                "INSERT INTO contract_review_sessions
+                 (id, workspace_id, source_asset_id, source_asset_sha256, source_file_name,
+                  status, stage, extraction_id, report_asset_id, revision,
+                  created_at, updated_at, completed_at, failure_json)
+                 VALUES (?1, ?2, ?3, ?4, 'external-reviewed-contract.pdf',
+                         'completed', 'completed', ?5, ?6, 1, 1, 1, 1, NULL)",
+                params![
+                    review_id,
+                    workspace.id,
+                    source_asset_id,
+                    source_sha256,
+                    extraction_id,
+                    report_asset_id,
+                ],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO contract_review_reports
+                 (id, review_id, report_asset_id, format, record_json, generated_at)
+                 VALUES (?1, ?2, ?3, 'html', ?4, 1)",
+                params![
+                    report_id,
+                    review_id,
+                    report_asset_id,
+                    serde_json::to_string(&report).unwrap(),
+                ],
+            )
+            .unwrap();
+
+        workspace = store
+            .execute(BusinessWorkspaceCommandEnvelope::PromoteReviewedContract {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: PromoteReviewedContractPayload {
+                    workspace_id: workspace.id.clone(),
+                    review_id,
+                    report_asset_id,
+                    document_number: "EXT-CONTRACT-001".to_string(),
+                    title: "External Reviewed Contract".to_string(),
+                    evidence: None,
+                    manual_waiver: Some(BusinessManualWaiverInput {
+                        reason: "external signed contract retained outside test fixture"
+                            .to_string(),
+                    }),
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            })
+            .response
+            .business_workspace;
+        assert!(workspace.current_documents.quote_document_id.is_none());
+        let contract_id = workspace
+            .current_documents
+            .contract_document_id
+            .as_deref()
+            .expect("external reviewed contract should become the effective contract");
+        assert_eq!(
+            workspace
+                .documents
+                .iter()
+                .find(|document| document.id == contract_id)
+                .unwrap()
+                .status,
+            BusinessDocumentStatus::Effective
+        );
+
+        let requirement_id = Uuid::new_v4().to_string();
+        workspace = store
+            .execute(BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: CreateBusinessAcceptanceBatchPayload {
+                    workspace_id: workspace.id.clone(),
+                    label: "Independent acceptance".to_string(),
+                    requirements: vec![BusinessAcceptanceRequirementInput {
+                        id: Some(requirement_id.clone()),
+                        label: "External contract delivery proof".to_string(),
+                        kind: BusinessAcceptanceMaterialKind::Proof,
+                        required_group_count: 1,
+                    }],
+                    output_specs: vec![BusinessAcceptanceOutputSpecInput {
+                        id: None,
+                        output_code: "independent-acceptance".to_string(),
+                        document_number: "EXT-ACC-001".to_string(),
+                        title: "Independent Acceptance Certificate".to_string(),
+                        template_key: document_engine::ACCEPTANCE_TEMPLATE_KEY.to_string(),
+                        template_asset_id: None,
+                        template_source_sha256: None,
+                        template_mapping_version: String::new(),
+                        contract_settlement: None,
+                        service_settlement_items: Vec::new(),
+                        payment_application: None,
+                        video_completion_acceptance: None,
+                        production_result_confirmation: None,
+                        format: BusinessDocumentFormat::Docx,
+                        requirement_ids: vec![requirement_id],
+                    }],
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            })
+            .response
+            .business_workspace;
+        let batch = workspace.acceptance_batches[0].clone();
+        let requirement = batch.requirements[0].clone();
+        workspace = add_acceptance_material(
+            &mut store,
+            &project_id,
+            workspace,
+            &batch.id,
+            AcceptanceMaterialSpec {
+                requirement_id: &requirement.id,
+                kind: requirement.kind,
+                group_key: "external-delivery-proof",
+                confirmed: true,
+                duplicate_of_material_id: None,
+            },
+        )
+        .0;
+        assert!(workspace.acceptance_batches[0].readiness.is_ready);
+
+        workspace = store
+            .execute(prepare_acceptance_documents_command(
+                &project_id,
+                &workspace,
+                &batch.id,
+            ))
+            .response
+            .business_workspace;
+        let acceptance_id = workspace.acceptance_batches[0].document_ids[0].clone();
+        let (workspace, _, acceptance_asset_id) = approve_and_generate_test_document(
+            &mut store,
+            &project_id,
+            workspace,
+            &acceptance_id,
+            BusinessDocumentFormat::Docx,
+        );
+        let workspace =
+            make_test_document_effective(&mut store, &project_id, workspace, &acceptance_id);
+        let acceptance = workspace
+            .documents
+            .iter()
+            .find(|document| document.id == acceptance_id)
+            .unwrap();
+        assert_eq!(acceptance.status, BusinessDocumentStatus::Effective);
+        assert_eq!(
+            acceptance.output_asset_id.as_deref(),
+            Some(acceptance_asset_id.as_str())
+        );
+        assert!(asset_service::resolve_original_path(
+            &store.connection,
+            &store.vault_root,
+            &acceptance_asset_id,
+        )
+        .unwrap()
+        .exists());
+        assert!(workspace.current_documents.quote_document_id.is_none());
+    }
+
+    #[test]
+    fn acceptance_batch_blocks_approval_and_generation_until_material_groups_are_ready() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let mut workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+
+        let create_batch = create_acceptance_batch_command(&project_id, &workspace);
+        let created = store.execute(create_batch.clone());
+        assert_eq!(
+            created.emitted_events[0].event_type,
+            BusinessWorkspaceEventType::AcceptanceBatchCreated
+        );
+        workspace = created.response.business_workspace;
+        let batch_id = workspace.acceptance_batches[0].id.clone();
+        let replayed = store.execute(create_batch);
+        assert!(replayed.response.replayed);
+        assert_eq!(
+            replayed.response.business_workspace.acceptance_batches[0].id,
+            batch_id
+        );
+
+        let requirements = workspace.acceptance_batches[0].requirements.clone();
+        let primary = &requirements[0];
+        let (next, first_material_id, _) = add_acceptance_material(
+            &mut store,
+            &project_id,
+            workspace,
+            &batch_id,
+            AcceptanceMaterialSpec {
+                requirement_id: &primary.id,
+                kind: primary.kind.clone(),
+                group_key: "video-group-1",
+                confirmed: true,
+                duplicate_of_material_id: None,
+            },
+        );
+        workspace = next;
+        for group in ["video-group-2", "video-group-3"] {
+            workspace = add_acceptance_material(
+                &mut store,
+                &project_id,
+                workspace,
+                &batch_id,
+                AcceptanceMaterialSpec {
+                    requirement_id: &primary.id,
+                    kind: primary.kind.clone(),
+                    group_key: group,
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                },
+            )
+            .0;
+        }
+        workspace = add_acceptance_material(
+            &mut store,
+            &project_id,
+            workspace,
+            &batch_id,
+            AcceptanceMaterialSpec {
+                requirement_id: &primary.id,
+                kind: primary.kind.clone(),
+                group_key: "video-group-1",
+                confirmed: true,
+                duplicate_of_material_id: Some(first_material_id),
+            },
+        )
+        .0;
+        workspace = add_acceptance_material(
+            &mut store,
+            &project_id,
+            workspace,
+            &batch_id,
+            AcceptanceMaterialSpec {
+                requirement_id: &primary.id,
+                kind: primary.kind.clone(),
+                group_key: "video-group-4",
+                confirmed: false,
+                duplicate_of_material_id: None,
+            },
+        )
+        .0;
+        for requirement in requirements.iter().skip(1) {
+            workspace = add_acceptance_material(
+                &mut store,
+                &project_id,
+                workspace,
+                &batch_id,
+                AcceptanceMaterialSpec {
+                    requirement_id: &requirement.id,
+                    kind: requirement.kind.clone(),
+                    group_key: &format!("{}-group-1", requirement.id),
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                },
+            )
+            .0;
+        }
+
+        let blocker = &workspace.acceptance_batches[0].readiness.blockers[0];
+        assert_eq!(blocker.required_group_count, 4);
+        assert_eq!(blocker.provided_group_count, 3);
+        assert_eq!(blocker.missing_group_count, 1);
+        assert!(!workspace.acceptance_batches[0].readiness.is_ready);
+
+        let output = workspace.acceptance_batches[0].output_specs[0].clone();
+        let prepare = prepare_acceptance_documents_command(&project_id, &workspace, &batch_id);
+        let prepared = store.execute(prepare.clone());
+        assert_eq!(
+            prepared.emitted_events[0].event_type,
+            BusinessWorkspaceEventType::AcceptanceDocumentsPrepared
+        );
+        workspace = prepared.response.business_workspace;
+        assert_eq!(workspace.acceptance_batches[0].document_ids.len(), 5);
+        assert_eq!(
+            workspace
+                .documents
+                .iter()
+                .filter(|document| {
+                    document.snapshot.acceptance_batch_id.as_deref() == Some(batch_id.as_str())
+                })
+                .count(),
+            5
+        );
+        assert!(workspace
+            .documents
+            .iter()
+            .filter(|document| {
+                document.snapshot.acceptance_batch_id.as_deref() == Some(batch_id.as_str())
+            })
+            .all(|document| document.status == BusinessDocumentStatus::Draft));
+        let replayed_prepare = store.execute(prepare);
+        assert!(replayed_prepare.response.replayed);
+        workspace = store
+            .execute(prepare_acceptance_documents_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+            ))
+            .response
+            .business_workspace;
+        assert_eq!(workspace.acceptance_batches[0].document_ids.len(), 5);
+        let document_id = workspace
+            .documents
+            .iter()
+            .find(|document| {
+                document.snapshot.acceptance_output_spec_id.as_deref() == Some(output.id.as_str())
+            })
+            .unwrap()
+            .id
+            .clone();
+        let prepared_document = workspace
+            .documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap();
+        assert_eq!(
+            prepared_document.snapshot.acceptance_batch_revision,
+            Some(workspace.acceptance_batches[0].revision)
+        );
+        assert_eq!(prepared_document.snapshot.material_bindings.len(), 8);
+        for binding in &prepared_document.snapshot.material_bindings {
+            let sha256 = store
+                .connection
+                .query_row(
+                    "SELECT sha256 FROM assets WHERE id = ?1 AND project_id = ?2 AND status = 'ready'",
+                    params![binding.asset_id, project_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap();
+            assert_eq!(binding.sha256, sha256);
+        }
+        workspace = store
+            .execute(status_command(
+                &project_id,
+                &workspace,
+                &document_id,
+                BusinessDocumentStatus::InReview,
+            ))
+            .response
+            .business_workspace;
+        let approval_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            status_command(
+                &project_id,
+                &workspace,
+                &document_id,
+                BusinessDocumentStatus::Approved,
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(approval_error.code, "BUSINESS_ACCEPTANCE_NOT_READY");
+
+        let (next, fourth_material_id, fourth_asset_id) = add_acceptance_material(
+            &mut store,
+            &project_id,
+            workspace,
+            &batch_id,
+            AcceptanceMaterialSpec {
+                requirement_id: &primary.id,
+                kind: primary.kind.clone(),
+                group_key: "video-group-4-ready",
+                confirmed: true,
+                duplicate_of_material_id: None,
+            },
+        );
+        workspace = next;
+        assert!(workspace.acceptance_batches[0].readiness.is_ready);
+        let refreshed_document = workspace
+            .documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap();
+        assert_eq!(refreshed_document.snapshot.material_bindings.len(), 9);
+        assert_eq!(
+            refreshed_document.snapshot.acceptance_batch_revision,
+            Some(workspace.acceptance_batches[0].revision)
+        );
+        workspace = store
+            .execute(status_command(
+                &project_id,
+                &workspace,
+                &document_id,
+                BusinessDocumentStatus::Approved,
+            ))
+            .response
+            .business_workspace;
+        let approved_snapshot = workspace
+            .documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap()
+            .snapshot
+            .clone();
+        let wrong_format_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            BusinessWorkspaceCommandEnvelope::GenerateDocument {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: GenerateBusinessDocumentPayload {
+                    workspace_id: workspace.id.clone(),
+                    document_id: document_id.clone(),
+                    format: BusinessDocumentFormat::Docx,
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            wrong_format_error.code,
+            "BUSINESS_ACCEPTANCE_OUTPUT_FORMAT_MISMATCH"
+        );
+
+        workspace = store
+            .execute(upsert_acceptance_material_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+                BusinessAcceptanceMaterialInput {
+                    id: Some(fourth_material_id.clone()),
+                    requirement_id: primary.id.clone(),
+                    asset_id: fourth_asset_id.clone(),
+                    kind: primary.kind.clone(),
+                    group_key: "video-group-4-ready".to_string(),
+                    confirmed: false,
+                    duplicate_of_material_id: None,
+                    notes: "temporarily unconfirmed".to_string(),
+                },
+            ))
+            .response
+            .business_workspace;
+        assert_eq!(
+            workspace
+                .documents
+                .iter()
+                .find(|document| document.id == document_id)
+                .unwrap()
+                .snapshot,
+            approved_snapshot
+        );
+        let generate = |workspace: &BusinessWorkspaceRecord| {
+            BusinessWorkspaceCommandEnvelope::GenerateDocument {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: GenerateBusinessDocumentPayload {
+                    workspace_id: workspace.id.clone(),
+                    document_id: document_id.clone(),
+                    format: output.format.clone(),
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            }
+        };
+        let generation_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            generate(&workspace),
+        )
+        .unwrap_err();
+        assert_eq!(generation_error.code, "BUSINESS_ACCEPTANCE_NOT_READY");
+
+        workspace = store
+            .execute(upsert_acceptance_material_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+                BusinessAcceptanceMaterialInput {
+                    id: Some(fourth_material_id),
+                    requirement_id: primary.id.clone(),
+                    asset_id: fourth_asset_id,
+                    kind: primary.kind.clone(),
+                    group_key: "video-group-4-ready".to_string(),
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                    notes: "confirmed".to_string(),
+                },
+            ))
+            .response
+            .business_workspace;
+        workspace = store
+            .execute(generate(&workspace))
+            .response
+            .business_workspace;
+        assert_eq!(
+            workspace
+                .documents
+                .iter()
+                .find(|document| document.id == document_id)
+                .unwrap()
+                .status,
+            BusinessDocumentStatus::Generated
+        );
+
+        store.reopen();
+        let restored = load_workspace(&store.connection, &workspace.id).unwrap();
+        assert!(restored.acceptance_batches[0].readiness.is_ready);
+        assert_eq!(restored.acceptance_batches[0].materials.len(), 11);
+        assert_eq!(
+            restored
+                .documents
+                .iter()
+                .find(|document| document.id == document_id)
+                .unwrap()
+                .snapshot
+                .acceptance_batch_id
+                .as_deref(),
+            Some(batch_id.as_str())
+        );
+        let restored_document = restored
+            .documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap();
+        assert_eq!(
+            restored_document
+                .snapshot
+                .acceptance_output_spec_id
+                .as_deref(),
+            Some(output.id.as_str())
+        );
+        assert_eq!(restored_document.snapshot, approved_snapshot);
+    }
+
+    #[test]
+    fn acceptance_batch_rejects_invalid_output_requirement_duplicate_code_and_template_format() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+
+        let mut invalid_requirement = create_acceptance_batch_command(&project_id, &workspace);
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } =
+            &mut invalid_requirement
+        else {
+            unreachable!()
+        };
+        payload.output_specs[0].requirement_ids[0] = Uuid::new_v4().to_string();
+        let error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            invalid_requirement,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.code,
+            "BUSINESS_ACCEPTANCE_OUTPUT_REQUIREMENT_NOT_FOUND"
+        );
+
+        let mut duplicate_code = create_acceptance_batch_command(&project_id, &workspace);
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } =
+            &mut duplicate_code
+        else {
+            unreachable!()
+        };
+        payload.output_specs[1].output_code = payload.output_specs[0].output_code.clone();
+        let error =
+            execute_command(&mut store.connection, &store.vault_root, duplicate_code).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_ACCEPTANCE_OUTPUT_SPEC_DUPLICATE");
+
+        let mut wrong_template_format = create_acceptance_batch_command(&project_id, &workspace);
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } =
+            &mut wrong_template_format
+        else {
+            unreachable!()
+        };
+        payload.output_specs[0].template_key =
+            document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY.to_string();
+        payload.output_specs[0].format = BusinessDocumentFormat::Docx;
+        let error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            wrong_template_format,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_FORMAT_MISMATCH");
+    }
+
+    #[test]
+    fn specialized_settlement_data_validation_preserves_draft_unknowns_and_rejects_bad_totals() {
+        let valid = normalize_contract_settlement_data(BusinessContractSettlementData {
+            contract_title: " Service Contract ".to_string(),
+            contract_number: " 001-A ".to_string(),
+            original_contract_amount_cents: 1_000_000,
+            contract_adjustment_cents: -100_000,
+            retention_rate_bps: Some(0),
+            final_settlement_amount_cents: 900_000,
+        })
+        .unwrap();
+        assert_eq!(valid.contract_title, "Service Contract");
+        assert_eq!(valid.contract_number, "001-A");
+        assert_eq!(valid.retention_rate_bps, None);
+
+        let mismatch = normalize_contract_settlement_data(BusinessContractSettlementData {
+            final_settlement_amount_cents: 800_000,
+            ..valid.clone()
+        })
+        .unwrap_err();
+        assert_eq!(mismatch.code, "BUSINESS_CONTRACT_SETTLEMENT_TOTAL_MISMATCH");
+
+        let fractional = normalize_contract_settlement_data(BusinessContractSettlementData {
+            original_contract_amount_cents: 1_000_001,
+            contract_adjustment_cents: 0,
+            final_settlement_amount_cents: 1_000_001,
+            ..valid
+        })
+        .unwrap_err();
+        assert_eq!(
+            fractional.code,
+            "BUSINESS_CONTRACT_SETTLEMENT_FRACTIONAL_CNY_UNCONFIRMED"
+        );
+
+        let draft_row = normalize_service_settlement_item(
+            0,
+            BusinessServiceSettlementItemData {
+                service_name: " Video production ".to_string(),
+                period: " 2026-07 ".to_string(),
+                description: " Delivery pending confirmation ".to_string(),
+                provided_as_required: None,
+                evidence_label: " Evidence group A ".to_string(),
+                remarks: String::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(draft_row.provided_as_required, None);
+        assert_eq!(draft_row.service_name, "Video production");
+    }
+
+    #[test]
+    fn acceptance_template_rejects_unregistered_mapping_version() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let mut command = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut command,
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+            Uuid::new_v4().to_string(),
+            "11".repeat(32),
+        );
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } = &mut command
+        else {
+            unreachable!()
+        };
+        payload.output_specs[0].template_mapping_version = "unregistered-map.v1".to_string();
+        let error = execute_command(&mut store.connection, &store.vault_root, command).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_MAPPING_VERSION_MISMATCH");
+    }
+
+    #[test]
+    fn acceptance_template_source_contract_rejects_missing_unexpected_and_wrong_registered_hash() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+
+        let mut missing = create_acceptance_batch_command(&project_id, &workspace);
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } = &mut missing
+        else {
+            unreachable!()
+        };
+        payload.output_specs[0].template_key =
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+                .to_string();
+        payload.output_specs[0].format = BusinessDocumentFormat::Docx;
+        let error = execute_command(&mut store.connection, &store.vault_root, missing).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_SOURCE_REQUIRED");
+
+        let mut unexpected = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut unexpected,
+            document_engine::ACCEPTANCE_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+            Uuid::new_v4().to_string(),
+            "11".repeat(32),
+        );
+        let error =
+            execute_command(&mut store.connection, &store.vault_root, unexpected).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_SOURCE_UNEXPECTED");
+
+        let mut wrong_hash = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut wrong_hash,
+            document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY,
+            BusinessDocumentFormat::Xlsx,
+            Uuid::new_v4().to_string(),
+            "22".repeat(32),
+        );
+        let error =
+            execute_command(&mut store.connection, &store.vault_root, wrong_hash).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_SOURCE_HASH_MISMATCH");
+    }
+
+    #[test]
+    fn acceptance_template_source_asset_is_verified_and_frozen_into_prepared_snapshot() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+        let contract_cents = workspace.financial_summary.contract_cents;
+        let workspace = upsert_test_payment(
+            &mut store,
+            &project_id,
+            workspace,
+            None,
+            contract_cents,
+            BusinessPaymentStatus::Planned,
+            None,
+            "PAYMENT-APPLICATION-PLAN",
+            "payment application fixture",
+        );
+        let payment_id = workspace.payments[0].id.clone();
+        let source_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "payment-application.doc",
+            b"legacy payment application fixture",
+        );
+        let normalized_source = store
+            .temporary
+            .path()
+            .join("payment-application-normalized.docx");
+        fs::write(&normalized_source, empty_ooxml_package()).unwrap();
+        let template_asset_id = asset_service::import_generated_artifact(
+            &mut store.connection,
+            &store.vault_root,
+            &project_id,
+            &normalized_source,
+            asset_service::GeneratedArtifactSource::NormalizedTemplate,
+            "approved-payment-template-fixture",
+        )
+        .unwrap()
+        .id;
+        let template_sha256 = asset_sha256(&store, &template_asset_id);
+        let mut command = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut command,
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+            template_asset_id.clone(),
+            template_sha256.clone(),
+        );
+        let BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { payload, .. } = &mut command
+        else {
+            unreachable!("acceptance command helper returned another command")
+        };
+        payload.output_specs[0].payment_application = Some(BusinessPaymentApplicationInput {
+            payment_id: payment_id.clone(),
+            contract_title: "White Goose Pond production services".to_string(),
+            contract_number: "BSE-CONTRACT-2026-001".to_string(),
+            work_summary: "completed the confirmed production deliverables".to_string(),
+            payment_period_start: "2026-07-01".to_string(),
+            payment_period_end: "2026-07-31".to_string(),
+            settlement_period: "2026-07".to_string(),
+            payment_sequence: 1,
+            invoice_amount_cents: contract_cents,
+            cumulative_recognized_amount_cents: contract_cents,
+            withheld_amount_cents: 0,
+            application_date: "2026-07-29".to_string(),
+            supplier_bank_routing_number: "102100000001".to_string(),
+            settlement_items: vec![BusinessPaymentSettlementItemData {
+                name: "Production service".to_string(),
+                unit: "item".to_string(),
+                contract_unit_price_cents: contract_cents,
+                original_quantity_millis: 1_000,
+                settlement_quantity_millis: 1_000,
+                remarks: "completed".to_string(),
+            }],
+        });
+
+        let source_sha256 = asset_sha256(&store, &source_asset_id);
+        let mapping_version = document_engine::expected_template_mapping_version(
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+        )
+        .unwrap();
+        let normalized_source_sha256 = source_sha256.to_ascii_uppercase();
+        let normalized_template_sha256 = template_sha256.to_ascii_uppercase();
+        let template_version_id = Uuid::new_v4().to_string();
+        store
+            .connection
+            .execute(
+                "INSERT INTO business_template_versions
+                 (id, workspace_id, source_asset_id, source_sha256,
+                  normalized_asset_id, normalized_sha256, template_key, mapping_version,
+                  converter_engine, converter_version, converter_policy_version,
+                  status, reviewed_by, reviewed_at, review_note, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                         'microsoft-word-com', '16.0', 'word-only.v1',
+                         'pendingReview', NULL, NULL, '', 1, 10, 10)",
+                params![
+                    template_version_id,
+                    workspace.id,
+                    source_asset_id,
+                    normalized_source_sha256,
+                    template_asset_id,
+                    normalized_template_sha256,
+                    document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+                    mapping_version,
+                ],
+            )
+            .unwrap();
+
+        let unapproved =
+            execute_command(&mut store.connection, &store.vault_root, command.clone()).unwrap_err();
+        assert_eq!(
+            unapproved.code,
+            "BUSINESS_TEMPLATE_VERSION_APPROVAL_REQUIRED"
+        );
+        store
+            .connection
+            .execute(
+                "UPDATE business_template_versions
+                 SET status = 'approved', reviewed_by = 'reviewer', reviewed_at = 20,
+                     review_note = 'fixture approved', revision = 2, updated_at = 20
+                 WHERE id = ?1",
+                [&template_version_id],
+            )
+            .unwrap();
+
+        let workspace = store.execute(command).response.business_workspace;
+        let batch = &workspace.acceptance_batches[0];
+        let spec = &batch.output_specs[0];
+        assert_eq!(
+            spec.template_asset_id.as_deref(),
+            Some(template_asset_id.as_str())
+        );
+        assert!(spec
+            .template_source_sha256
+            .as_deref()
+            .is_some_and(|sha256| sha256.eq_ignore_ascii_case(&template_sha256)));
+        assert_eq!(
+            spec.template_mapping_version,
+            document_engine::expected_template_mapping_version(
+                document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+            )
+            .unwrap()
+        );
+        let payment_application = spec.payment_application.as_ref().unwrap();
+        assert_eq!(payment_application.payment_id, payment_id);
+        assert_eq!(payment_application.settlement_total_cents, contract_cents);
+        assert_eq!(payment_application.cumulative_paid_cents, 0);
+        assert_eq!(payment_application.remaining_payable_cents, contract_cents);
+        let batch_id = batch.id.clone();
+        let spec_id = spec.id.clone();
+        let workspace = store
+            .execute(prepare_acceptance_documents_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+            ))
+            .response
+            .business_workspace;
+        let snapshot = &workspace
+            .documents
+            .iter()
+            .find(|document| {
+                document.snapshot.acceptance_output_spec_id.as_deref() == Some(spec_id.as_str())
+            })
+            .unwrap()
+            .snapshot;
+        assert_eq!(
+            snapshot.template_asset_id.as_deref(),
+            Some(template_asset_id.as_str())
+        );
+        assert!(snapshot
+            .template_source_sha256
+            .as_deref()
+            .is_some_and(|sha256| sha256.eq_ignore_ascii_case(&template_sha256)));
+        assert_eq!(
+            snapshot.template_mapping_version,
+            document_engine::expected_template_mapping_version(
+                document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            snapshot.payment_application.as_ref(),
+            Some(payment_application)
+        );
+        assert_eq!(
+            snapshot.payment.as_ref().map(|payment| payment.id.as_str()),
+            Some(payment_id.as_str())
+        );
+    }
+
+    #[test]
+    fn official_payment_generation_blocks_bank_account_profile_drift() {
+        let (mut workspace, document) = payment_application_currentness_fixture();
+        ensure_payment_application_current(&workspace, &document).unwrap();
+        let frozen = document.snapshot.payment_application.as_ref().unwrap();
+        assert!(frozen
+            .bank_account_profile_version
+            .starts_with("payment-bank-account-sha256:"));
+        for sensitive in [
+            document.snapshot.profile.supplier_legal_name.as_str(),
+            document.snapshot.profile.supplier_bank_name.as_str(),
+            document.snapshot.profile.supplier_bank_account.as_str(),
+            frozen.supplier_bank_routing_number.as_str(),
+        ] {
+            assert!(!frozen.bank_account_profile_version.contains(sensitive));
+        }
+
+        workspace.profile.supplier_bank_account = "622200000099".to_string();
+        let error = ensure_payment_application_current(&workspace, &document).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_PAYMENT_BANK_ACCOUNT_CHANGED");
+        assert!(!error.message.contains("622200000099"));
+    }
+
+    #[test]
+    fn official_payment_generation_blocks_invoice_issue_and_red_correction_drift() {
+        let (mut workspace, document) = payment_application_currentness_fixture();
+        let data = document.snapshot.payment_application.as_ref().unwrap();
+        let payment_id = data.payment_id.clone();
+        workspace.invoices.push(payment_currentness_invoice(
+            &payment_id,
+            BusinessInvoiceKind::Issued,
+            data.invoice_amount_cents - 1,
+            None,
+        ));
+        let error = ensure_payment_application_current(&workspace, &document).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_PAYMENT_INVOICE_LEDGER_CHANGED");
+
+        let (mut workspace, document) = payment_application_currentness_fixture();
+        let data = document.snapshot.payment_application.as_ref().unwrap();
+        let payment_id = data.payment_id.clone();
+        let issued = payment_currentness_invoice(
+            &payment_id,
+            BusinessInvoiceKind::Issued,
+            data.invoice_amount_cents,
+            None,
+        );
+        let issued_id = issued.id.clone();
+        workspace.invoices.push(issued);
+        workspace.invoices.push(payment_currentness_invoice(
+            &payment_id,
+            BusinessInvoiceKind::Reversal,
+            1,
+            Some(issued_id),
+        ));
+        let error = ensure_payment_application_current(&workspace, &document).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_PAYMENT_INVOICE_LEDGER_CHANGED");
+    }
+
+    #[test]
+    fn payment_application_full_invoice_reversal_to_zero_is_blocked() {
+        let (mut workspace, document) = payment_application_currentness_fixture();
+        let data = document
+            .snapshot
+            .payment_application
+            .as_ref()
+            .unwrap()
+            .clone();
+        let issued = payment_currentness_invoice(
+            &data.payment_id,
+            BusinessInvoiceKind::Issued,
+            data.invoice_amount_cents,
+            None,
+        );
+        let issued_id = issued.id.clone();
+        workspace.invoices.push(issued);
+        workspace.invoices.push(payment_currentness_invoice(
+            &data.payment_id,
+            BusinessInvoiceKind::Reversal,
+            data.invoice_amount_cents,
+            Some(issued_id),
+        ));
+
+        let generation_error =
+            ensure_payment_application_current(&workspace, &document).unwrap_err();
+        assert_eq!(
+            generation_error.code,
+            "BUSINESS_PAYMENT_INVOICE_LEDGER_CHANGED"
+        );
+
+        let freeze_error = freeze_payment_application_data(
+            &workspace,
+            &BusinessPaymentApplicationInput {
+                payment_id: data.payment_id,
+                contract_title: data.contract_title,
+                contract_number: data.contract_number,
+                work_summary: data.work_summary,
+                payment_period_start: data.payment_period_start,
+                payment_period_end: data.payment_period_end,
+                settlement_period: data.settlement_period,
+                payment_sequence: data.payment_sequence,
+                invoice_amount_cents: data.invoice_amount_cents,
+                cumulative_recognized_amount_cents: data.cumulative_recognized_amount_cents,
+                withheld_amount_cents: data.withheld_amount_cents,
+                application_date: data.application_date,
+                supplier_bank_routing_number: data.supplier_bank_routing_number,
+                settlement_items: data.settlement_items,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            freeze_error.code,
+            "BUSINESS_PAYMENT_INVOICE_AMOUNT_MISMATCH"
+        );
+    }
+
+    #[test]
+    fn acceptance_template_source_asset_rejects_foreign_tampered_and_legacy_doc_files() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let other_project_id =
+            insert_project(&store.connection, "Other Project", "Other Customer", None);
+        let foreign_asset_id = import_test_asset(
+            &mut store,
+            &other_project_id,
+            "foreign-template.docx",
+            empty_ooxml_package(),
+        );
+        let mut foreign = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut foreign,
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+            foreign_asset_id.clone(),
+            asset_sha256(&store, &foreign_asset_id),
+        );
+        let error = execute_command(&mut store.connection, &store.vault_root, foreign).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_ASSET_PROJECT_MISMATCH");
+
+        let tampered_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "tampered-template.docx",
+            empty_ooxml_package(),
+        );
+        let tampered_sha256 = asset_sha256(&store, &tampered_asset_id);
+        let tampered_path = asset_service::resolve_original_path(
+            &store.connection,
+            &store.vault_root,
+            &tampered_asset_id,
+        )
+        .unwrap();
+        fs::write(tampered_path, b"tampered template").unwrap();
+        let mut tampered = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut tampered,
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+            tampered_asset_id,
+            tampered_sha256,
+        );
+        let error =
+            execute_command(&mut store.connection, &store.vault_root, tampered).unwrap_err();
+        assert_eq!(error.code, "VAULT_ASSET_INTEGRITY_MISMATCH");
+
+        let legacy_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "legacy-payment-application.doc",
+            b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1legacy binary doc template",
+        );
+        let mut legacy = create_acceptance_batch_command(&project_id, &workspace);
+        bind_first_acceptance_template_source(
+            &mut legacy,
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+            legacy_asset_id.clone(),
+            asset_sha256(&store, &legacy_asset_id),
+        );
+        let error = execute_command(&mut store.connection, &store.vault_root, legacy).unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_ASSET_FORMAT_MISMATCH");
+    }
+
+    #[test]
+    #[ignore = "requires the registered real White Goose Pond settlement templates"]
+    fn real_settlement_templates_generate_through_vault_business_command_path() {
+        let contract_template = std::env::var_os("BSAIGC_CONTRACT_SETTLEMENT_TEMPLATE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| external_qa_fixture("templates/synthetic-contract-settlement.xlsx"));
+        let service_template = std::env::var_os("BSAIGC_SERVICE_SETTLEMENT_TEMPLATE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| external_qa_fixture("templates/synthetic-service-settlement.docx"));
+        assert!(contract_template.is_file());
+        assert!(service_template.is_file());
+
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+        let workspace = generate_real_settlement_document(
+            &mut store,
+            &project_id,
+            workspace,
+            &contract_template,
+            document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY,
+            BusinessDocumentFormat::Xlsx,
+        );
+        let workspace = generate_real_settlement_document(
+            &mut store,
+            &project_id,
+            workspace,
+            &service_template,
+            document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY,
+            BusinessDocumentFormat::Docx,
+        );
+        assert_eq!(
+            workspace
+                .documents
+                .iter()
+                .filter(|document| {
+                    matches!(
+                        document.template_key.as_str(),
+                        document_engine::BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY
+                            | document_engine::BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY
+                    ) && document.status == BusinessDocumentStatus::Generated
+                })
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn acceptance_material_rejects_asset_from_another_project() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let workspace = store
+            .execute(create_acceptance_batch_command(&project_id, &workspace))
+            .response
+            .business_workspace;
+        let batch = &workspace.acceptance_batches[0];
+        let requirement = &batch.requirements[0];
+        let other_project_id =
+            insert_project(&store.connection, "Other Project", "Other Customer", None);
+        let foreign_asset_id = import_test_asset(
+            &mut store,
+            &other_project_id,
+            "foreign.mp4",
+            b"foreign project material",
+        );
+        let error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            upsert_acceptance_material_command(
+                &project_id,
+                &workspace,
+                &batch.id,
+                BusinessAcceptanceMaterialInput {
+                    id: None,
+                    requirement_id: requirement.id.clone(),
+                    asset_id: foreign_asset_id,
+                    kind: requirement.kind.clone(),
+                    group_key: "foreign-group".to_string(),
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                    notes: String::new(),
+                },
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "BUSINESS_ACCEPTANCE_ASSET_PROJECT_MISMATCH");
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+    }
+
+    #[test]
+    fn acceptance_prepare_replay_and_stale_retry_keep_exactly_five_documents() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+        let workspace = store
+            .execute(create_acceptance_batch_command(&project_id, &workspace))
+            .response
+            .business_workspace;
+        let batch_id = workspace.acceptance_batches[0].id.clone();
+        let prepare = prepare_acceptance_documents_command(&project_id, &workspace, &batch_id);
+
+        let prepared = store.execute(prepare.clone());
+        assert!(!prepared.response.replayed);
+        let prepared_workspace = prepared.response.business_workspace;
+        let prepared_revision = prepared_workspace.revision;
+        let mut prepared_document_ids = prepared_workspace
+            .documents
+            .iter()
+            .filter(|document| {
+                document.snapshot.acceptance_batch_id.as_deref() == Some(batch_id.as_str())
+            })
+            .map(|document| document.id.clone())
+            .collect::<Vec<_>>();
+        prepared_document_ids.sort();
+        assert_eq!(prepared_document_ids.len(), 5);
+        assert_eq!(
+            prepared_workspace.acceptance_batches[0].document_ids.len(),
+            5
+        );
+
+        let replayed = store.execute(prepare);
+        assert!(replayed.response.replayed);
+        assert!(replayed.emitted_events.is_empty());
+        assert_eq!(replayed.response.business_workspace, prepared_workspace);
+        assert_eq!(
+            replayed.response.business_workspace.revision,
+            prepared_revision
+        );
+
+        let stale_prepare =
+            prepare_acceptance_documents_command(&project_id, &prepared_workspace, &batch_id);
+        let repeated = store.execute(prepare_acceptance_documents_command(
+            &project_id,
+            &prepared_workspace,
+            &batch_id,
+        ));
+        let repeated_workspace = repeated.response.business_workspace;
+        let mut repeated_document_ids = repeated_workspace
+            .documents
+            .iter()
+            .filter(|document| {
+                document.snapshot.acceptance_batch_id.as_deref() == Some(batch_id.as_str())
+            })
+            .map(|document| document.id.clone())
+            .collect::<Vec<_>>();
+        repeated_document_ids.sort();
+        assert_eq!(repeated_document_ids, prepared_document_ids);
+        assert_eq!(
+            repeated_workspace.acceptance_batches[0].document_ids.len(),
+            5
+        );
+
+        let journal_counts_before_stale = store
+            .connection
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM business_workspace_events),
+                     (SELECT COUNT(*) FROM business_workspace_command_receipts)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        let stale_error =
+            execute_command(&mut store.connection, &store.vault_root, stale_prepare).unwrap_err();
+        assert_eq!(stale_error.code, "REVISION_CONFLICT");
+        assert_eq!(
+            load_workspace(&store.connection, &repeated_workspace.id).unwrap(),
+            repeated_workspace
+        );
+        let journal_counts_after_stale = store
+            .connection
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM business_workspace_events),
+                     (SELECT COUNT(*) FROM business_workspace_command_receipts)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(journal_counts_after_stale, journal_counts_before_stale);
+    }
+
+    #[test]
+    fn acceptance_material_validation_replay_and_cas_are_atomic() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let workspace = prepare_effective_contract(&mut store, &project_id, workspace);
+        let workspace = store
+            .execute(create_acceptance_batch_command(&project_id, &workspace))
+            .response
+            .business_workspace;
+        let batch_id = workspace.acceptance_batches[0].id.clone();
+        let requirement = workspace.acceptance_batches[0].requirements[0].clone();
+        let ready_asset_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "acceptance-material.mp4",
+            &[0, 0, 0, 24, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm'],
+        );
+        let wrong_asset_kind_id = import_test_asset(
+            &mut store,
+            &project_id,
+            "acceptance-material.txt",
+            b"wrong acceptance material kind",
+        );
+
+        let missing_asset_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            upsert_acceptance_material_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+                BusinessAcceptanceMaterialInput {
+                    id: None,
+                    requirement_id: requirement.id.clone(),
+                    asset_id: Uuid::new_v4().to_string(),
+                    kind: requirement.kind.clone(),
+                    group_key: "missing-asset".to_string(),
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                    notes: String::new(),
+                },
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(missing_asset_error.code, "ASSET_NOT_FOUND");
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+
+        let mismatched_kind = match requirement.kind {
+            BusinessAcceptanceMaterialKind::Video => BusinessAcceptanceMaterialKind::Script,
+            _ => BusinessAcceptanceMaterialKind::Video,
+        };
+        let kind_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            upsert_acceptance_material_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+                BusinessAcceptanceMaterialInput {
+                    id: None,
+                    requirement_id: requirement.id.clone(),
+                    asset_id: ready_asset_id.clone(),
+                    kind: mismatched_kind,
+                    group_key: "wrong-kind".to_string(),
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                    notes: String::new(),
+                },
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            kind_error.code,
+            "BUSINESS_ACCEPTANCE_MATERIAL_KIND_MISMATCH"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+
+        let journal_counts_before_asset_kind = store
+            .connection
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM business_workspace_events),
+                     (SELECT COUNT(*) FROM business_workspace_command_receipts)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        let asset_kind_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            upsert_acceptance_material_command(
+                &project_id,
+                &workspace,
+                &batch_id,
+                BusinessAcceptanceMaterialInput {
+                    id: None,
+                    requirement_id: requirement.id.clone(),
+                    asset_id: wrong_asset_kind_id,
+                    kind: requirement.kind.clone(),
+                    group_key: "wrong-asset-kind".to_string(),
+                    confirmed: true,
+                    duplicate_of_material_id: None,
+                    notes: String::new(),
+                },
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            asset_kind_error.code,
+            "BUSINESS_ACCEPTANCE_ASSET_KIND_MISMATCH"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+        let journal_counts_after_asset_kind = store
+            .connection
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM business_workspace_events),
+                     (SELECT COUNT(*) FROM business_workspace_command_receipts)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            journal_counts_after_asset_kind,
+            journal_counts_before_asset_kind
+        );
+
+        let upsert = upsert_acceptance_material_command(
+            &project_id,
+            &workspace,
+            &batch_id,
+            BusinessAcceptanceMaterialInput {
+                id: None,
+                requirement_id: requirement.id.clone(),
+                asset_id: ready_asset_id.clone(),
+                kind: requirement.kind.clone(),
+                group_key: "video-group-1".to_string(),
+                confirmed: true,
+                duplicate_of_material_id: None,
+                notes: "first".to_string(),
+            },
+        );
+        let inserted = store.execute(upsert.clone());
+        let inserted_workspace = inserted.response.business_workspace;
+        assert_eq!(inserted_workspace.acceptance_batches[0].materials.len(), 1);
+        let material_id = inserted_workspace.acceptance_batches[0].materials[0]
+            .id
+            .clone();
+
+        let replayed = store.execute(upsert.clone());
+        assert!(replayed.response.replayed);
+        assert!(replayed.emitted_events.is_empty());
+        assert_eq!(replayed.response.business_workspace, inserted_workspace);
+
+        let stale_upsert = upsert_acceptance_material_command(
+            &project_id,
+            &inserted_workspace,
+            &batch_id,
+            BusinessAcceptanceMaterialInput {
+                id: Some(material_id.clone()),
+                requirement_id: requirement.id.clone(),
+                asset_id: ready_asset_id.clone(),
+                kind: requirement.kind.clone(),
+                group_key: "video-group-stale".to_string(),
+                confirmed: true,
+                duplicate_of_material_id: None,
+                notes: "stale".to_string(),
+            },
+        );
+        let updated = store.execute(upsert_acceptance_material_command(
+            &project_id,
+            &inserted_workspace,
+            &batch_id,
+            BusinessAcceptanceMaterialInput {
+                id: Some(material_id),
+                requirement_id: requirement.id,
+                asset_id: ready_asset_id,
+                kind: requirement.kind,
+                group_key: "video-group-current".to_string(),
+                confirmed: true,
+                duplicate_of_material_id: None,
+                notes: "current".to_string(),
+            },
+        ));
+        let updated_workspace = updated.response.business_workspace;
+
+        let stale_error =
+            execute_command(&mut store.connection, &store.vault_root, stale_upsert).unwrap_err();
+        assert_eq!(stale_error.code, "REVISION_CONFLICT");
+        assert_eq!(
+            load_workspace(&store.connection, &updated_workspace.id).unwrap(),
+            updated_workspace
+        );
+
+        let mut idempotency_collision = upsert;
+        if let BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial {
+            command_id,
+            payload,
+            ..
+        } = &mut idempotency_collision
+        {
+            *command_id = Uuid::new_v4().to_string();
+            payload.material.notes = "collision".to_string();
+        }
+        let collision_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            idempotency_collision,
+        )
+        .unwrap_err();
+        assert_eq!(collision_error.code, "IDEMPOTENCY_KEY_REUSED");
+        assert_eq!(
+            load_workspace(&store.connection, &updated_workspace.id).unwrap(),
+            updated_workspace
+        );
     }
 
     #[test]
@@ -9071,7 +17337,156 @@ mod tests {
             .into_iter()
             .find(|event| event.aggregate_id == target_workspace.id)
             .unwrap();
-        assert_eq!(target_created.business_workspace, reopened_target);
+        let mut expected_event_workspace = reopened_target;
+        expected_event_workspace.profile.supplier_bank_name.clear();
+        expected_event_workspace
+            .profile
+            .supplier_bank_account
+            .clear();
+        assert_eq!(target_created.business_workspace, expected_event_workspace);
+    }
+
+    #[test]
+    fn bank_details_stay_authoritative_but_never_enter_event_or_receipt_json() {
+        const BANK_NAME: &str = "Confidential Settlement Bank";
+        const BANK_ACCOUNT: &str = "6222999900001111222";
+
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let mut input = profile_input(&workspace.profile);
+        input.supplier_bank_name = BANK_NAME.to_string();
+        input.supplier_bank_account = BANK_ACCOUNT.to_string();
+        let command = update_profile_command(&project_id, &workspace, input);
+        let outcome = store.execute(command.clone());
+
+        assert!(!outcome.response.replayed);
+        assert_eq!(
+            outcome
+                .response
+                .business_workspace
+                .profile
+                .supplier_bank_name,
+            BANK_NAME
+        );
+        assert_eq!(
+            outcome
+                .response
+                .business_workspace
+                .profile
+                .supplier_bank_account,
+            BANK_ACCOUNT
+        );
+        assert!(outcome.emitted_events[0]
+            .business_workspace
+            .profile
+            .supplier_bank_name
+            .is_empty());
+        assert!(outcome.emitted_events[0]
+            .business_workspace
+            .profile
+            .supplier_bank_account
+            .is_empty());
+
+        let command_id = outcome.response.receipt.command_id.clone();
+        fn stored_journal_json(connection: &Connection, command_id: &str) -> (String, String) {
+            let event: String = connection
+                .query_row(
+                    "SELECT payload_json FROM business_workspace_events WHERE command_id = ?1",
+                    [command_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let receipt: String = connection
+                .query_row(
+                    "SELECT response_json FROM business_workspace_command_receipts
+                     WHERE command_id = ?1",
+                    [command_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            (event, receipt)
+        }
+        let (event_json, receipt_json) = stored_journal_json(&store.connection, &command_id);
+        for raw_json in [&event_json, &receipt_json] {
+            assert!(!raw_json.contains(BANK_NAME));
+            assert!(!raw_json.contains(BANK_ACCOUNT));
+        }
+
+        let authoritative_profile_json: String = store
+            .connection
+            .query_row(
+                "SELECT profile_json FROM business_workspaces WHERE id = ?1",
+                [&outcome.response.business_workspace.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let authoritative_profile: BusinessProfile =
+            serde_json::from_str(&authoritative_profile_json).unwrap();
+        assert_eq!(authoritative_profile.supplier_bank_name, BANK_NAME);
+        assert_eq!(authoritative_profile.supplier_bank_account, BANK_ACCOUNT);
+
+        let replayed = store.execute(command);
+        assert!(replayed.response.replayed);
+        assert_eq!(
+            replayed
+                .response
+                .business_workspace
+                .profile
+                .supplier_bank_name,
+            BANK_NAME
+        );
+        assert_eq!(
+            replayed
+                .response
+                .business_workspace
+                .profile
+                .supplier_bank_account,
+            BANK_ACCOUNT
+        );
+
+        store
+            .connection
+            .execute(
+                "UPDATE business_workspace_events SET payload_json = ?1 WHERE command_id = ?2",
+                params![
+                    serde_json::to_string(&outcome.response.business_workspace).unwrap(),
+                    command_id
+                ],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE business_workspace_command_receipts
+                 SET response_json = ?1 WHERE command_id = ?2",
+                params![
+                    serde_json::to_string(&outcome.response).unwrap(),
+                    command_id
+                ],
+            )
+            .unwrap();
+        migrate(&store.connection).unwrap();
+
+        let (migrated_event_json, migrated_receipt_json) =
+            stored_journal_json(&store.connection, &command_id);
+        for raw_json in [&migrated_event_json, &migrated_receipt_json] {
+            assert!(!raw_json.contains(BANK_NAME));
+            assert!(!raw_json.contains(BANK_ACCOUNT));
+        }
+        let authoritative_profile_json: String = store
+            .connection
+            .query_row(
+                "SELECT profile_json FROM business_workspaces WHERE id = ?1",
+                [&outcome.response.business_workspace.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(authoritative_profile_json.contains(BANK_NAME));
+        assert!(authoritative_profile_json.contains(BANK_ACCOUNT));
     }
 
     #[test]
@@ -9301,6 +17716,8 @@ mod tests {
             "voided_at",
             "voided_by",
             "void_reason",
+            "acceptance_batch_id",
+            "acceptance_output_spec_id",
         ] {
             assert_eq!(
                 connection
@@ -9321,6 +17738,18 @@ mod tests {
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master
                      WHERE type = 'index' AND name = 'idx_business_documents_review'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'index'
+                       AND name = 'idx_business_documents_acceptance_output'",
                     [],
                     |row| row.get::<_, i64>(0),
                 )
@@ -9468,10 +17897,13 @@ mod tests {
             prefill_source_workspace_id: None,
             profile: old_profile,
             documents: Vec::new(),
+            acceptance_batches: Vec::new(),
+            template_versions: Vec::new(),
             payments: Vec::new(),
             quote_confirmations: Vec::new(),
             receipts: Vec::new(),
             milestones: Vec::new(),
+            settlement_batches: Vec::new(),
             delivery_submissions: Vec::new(),
             invoices: Vec::new(),
             archive_snapshots: Vec::new(),
@@ -9588,7 +18020,7 @@ mod tests {
         assert_eq!(migrated[0].customer.legal_name, "Legacy Customer");
         let replayed = execute_command(&mut connection, &vault_root, legacy_command).unwrap();
         assert!(replayed.response.replayed);
-        assert_eq!(replayed.response.business_workspace, legacy_workspace);
+        assert_eq!(replayed.response.business_workspace, migrated[0]);
         assert!(replayed.emitted_events.is_empty());
         assert_eq!(
             connection
@@ -9804,6 +18236,72 @@ mod tests {
             load_workspace(&store.connection, &workspace.id).unwrap(),
             migrated
         );
+    }
+
+    #[test]
+    fn baietan_tax_inclusive_profile_calculates_discounted_total_once() {
+        let profile = normalize_profile(
+            BusinessProfileInput {
+                project_title: "Baietan".to_string(),
+                customer_name: "Customer".to_string(),
+                currency: "CNY".to_string(),
+                tax_mode: BusinessTaxMode::TaxInclusive,
+                default_tax_rate_bps: 600,
+                project_discount_cents: 490_000,
+                line_items: vec![BusinessLineItemInput {
+                    id: None,
+                    name: "Video production".to_string(),
+                    description: String::new(),
+                    quantity_millis: 4_000,
+                    unit: "item".to_string(),
+                    unit_price_cents: 2_120_000,
+                    tax_rate_bps: 600,
+                }],
+                ..BusinessProfileInput::default()
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(profile.line_items[0].unit_price_cents, 2_120_000);
+        assert_eq!(profile.line_items[0].amount_cents, 8_480_000);
+        assert_eq!(
+            profile.quotation_totals,
+            Some(BusinessQuotationTotals {
+                original_total_cents: 8_480_000,
+                project_discount_cents: 490_000,
+                tax_exclusive_total_cents: 7_537_736,
+                tax_cents: 452_264,
+                final_total_cents: 7_990_000,
+            })
+        );
+    }
+
+    #[test]
+    fn project_discount_cannot_exceed_original_total() {
+        let error = normalize_profile(
+            BusinessProfileInput {
+                project_title: "Discount validation".to_string(),
+                customer_name: "Customer".to_string(),
+                currency: "CNY".to_string(),
+                project_discount_cents: 101,
+                line_items: vec![BusinessLineItemInput {
+                    id: None,
+                    name: "Service".to_string(),
+                    description: String::new(),
+                    quantity_millis: 1_000,
+                    unit: "item".to_string(),
+                    unit_price_cents: 100,
+                    tax_rate_bps: 0,
+                }],
+                ..BusinessProfileInput::default()
+            },
+            &[],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "VALIDATION_FAILED");
+        assert!(error.message.contains("must not exceed"));
     }
 
     #[test]
@@ -10073,6 +18571,7 @@ mod tests {
                     title: "Draft".to_string(),
                     template_key: document_engine::QUOTE_TEMPLATE_KEY.to_string(),
                     payment_id: None,
+                    acceptance_batch_id: None,
                 },
                 idempotency_key: Uuid::new_v4().to_string(),
                 expected_revision: Some(workspace.revision),
@@ -10128,6 +18627,18 @@ mod tests {
                 status: BusinessDocumentStatus::InReview,
                 snapshot: BusinessDocumentSnapshot {
                     workspace_revision: workspace.revision,
+                    acceptance_batch_id: None,
+                    acceptance_output_spec_id: None,
+                    acceptance_batch_revision: None,
+                    material_bindings: Vec::new(),
+                    template_asset_id: None,
+                    template_source_sha256: None,
+                    template_mapping_version: String::new(),
+                    contract_settlement: None,
+                    service_settlement_items: Vec::new(),
+                    payment_application: None,
+                    video_completion_acceptance: None,
+                    production_result_confirmation: None,
                     customer_id: workspace.customer_id.clone(),
                     customer: workspace.customer.clone(),
                     profile,
@@ -10690,6 +19201,7 @@ mod tests {
                         title: "Invalid template".to_string(),
                         template_key: template_key.to_string(),
                         payment_id: None,
+                        acceptance_batch_id: None,
                     },
                     idempotency_key: Uuid::new_v4().to_string(),
                     expected_revision: Some(workspace.revision),
@@ -10782,6 +19294,186 @@ mod tests {
             )
             .unwrap();
         assert_eq!(origin, "user");
+    }
+
+    #[test]
+    fn template_review_is_terminal_replayable_and_preserves_linked_asset() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let source_path = store.temporary.path().join("customer-template.doc");
+        let normalized_path = store.temporary.path().join("customer-template.docx");
+        fs::write(
+            &source_path,
+            b"{\\rtf1\\ansi immutable legacy template fixture}",
+        )
+        .unwrap();
+        fs::write(&normalized_path, empty_ooxml_package()).unwrap();
+        let source_asset = asset_service::import_file(
+            &mut store.connection,
+            &store.vault_root,
+            Some(&project_id),
+            &source_path,
+        )
+        .unwrap();
+        let normalized_asset = asset_service::import_generated_artifact(
+            &mut store.connection,
+            &store.vault_root,
+            &project_id,
+            &normalized_path,
+            asset_service::GeneratedArtifactSource::NormalizedTemplate,
+            "template-review-fixture",
+        )
+        .unwrap();
+        let normalized_vault_path = asset_service::resolve_original_path(
+            &store.connection,
+            &store.vault_root,
+            &normalized_asset.id,
+        )
+        .unwrap();
+        let template_version_id = Uuid::new_v4().to_string();
+        let template_key =
+            document_engine::BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY;
+        let mapping_version = document_engine::expected_template_mapping_version(template_key)
+            .expect("registered payment template mapping");
+        store
+            .connection
+            .execute(
+                "INSERT INTO business_template_versions
+                 (id, workspace_id, source_asset_id, source_sha256,
+                  normalized_asset_id, normalized_sha256, template_key, mapping_version,
+                  converter_engine, converter_version, converter_policy_version,
+                  status, reviewed_by, reviewed_at, review_note, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                         'microsoft-word-com', '16.0', 'word-only.v1',
+                         'pendingReview', NULL, NULL, '', 1, 10, 10)",
+                params![
+                    template_version_id,
+                    workspace.id,
+                    source_asset.id,
+                    source_asset.sha256,
+                    normalized_asset.id,
+                    normalized_asset.sha256,
+                    template_key,
+                    mapping_version,
+                ],
+            )
+            .unwrap();
+
+        let command = BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion {
+            command_id: Uuid::new_v4().to_string(),
+            protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+            context: context(&project_id),
+            payload: ApproveBusinessTemplateVersionPayload {
+                workspace_id: workspace.id.clone(),
+                template_version_id: template_version_id.clone(),
+                note: "Verified immutable conversion and mapping".to_string(),
+            },
+            idempotency_key: Uuid::new_v4().to_string(),
+            expected_revision: Some(workspace.revision),
+            deadline_at: None,
+        };
+        let invalid =
+            execute_command(&mut store.connection, &store.vault_root, command.clone()).unwrap_err();
+        assert_eq!(invalid.code, "BUSINESS_PAYMENT_TEMPLATE_INVALID");
+        let fallback_template_key =
+            document_engine::BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY;
+        let fallback_mapping_version =
+            document_engine::expected_template_mapping_version(fallback_template_key).unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE business_template_versions
+                 SET template_key = ?1, mapping_version = ?2
+                 WHERE id = ?3",
+                params![
+                    fallback_template_key,
+                    fallback_mapping_version,
+                    template_version_id,
+                ],
+            )
+            .unwrap();
+
+        let approved = store.execute(command.clone());
+        assert_eq!(approved.emitted_events.len(), 1);
+        assert_eq!(
+            approved.emitted_events[0].event_type,
+            BusinessWorkspaceEventType::TemplateVersionApproved
+        );
+        let version = approved
+            .response
+            .business_workspace
+            .template_versions
+            .iter()
+            .find(|version| version.id == template_version_id)
+            .unwrap();
+        assert_eq!(version.status, BusinessTemplateVersionStatus::Approved);
+        assert_eq!(version.revision, 2);
+        assert_eq!(version.reviewed_by.as_deref(), Some("operator-local"));
+
+        let replayed = store.execute(command);
+        assert!(replayed.response.replayed);
+        assert!(replayed.emitted_events.is_empty());
+        assert_eq!(
+            reconcile_generated_assets(&mut store.connection, &store.vault_root).unwrap(),
+            0
+        );
+        assert!(normalized_vault_path.exists());
+
+        let error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            BusinessWorkspaceCommandEnvelope::RejectTemplateVersion {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: RejectBusinessTemplateVersionPayload {
+                    workspace_id: workspace.id,
+                    template_version_id,
+                    note: "Cannot reverse a terminal decision".to_string(),
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(approved.response.business_workspace.revision),
+                deadline_at: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_VERSION_TERMINAL");
+    }
+
+    #[test]
+    fn reconciliation_removes_unlinked_normalized_template_asset() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let source = store.temporary.path().join("orphan-template.docx");
+        fs::write(&source, empty_ooxml_package()).unwrap();
+        let asset = asset_service::import_generated_artifact(
+            &mut store.connection,
+            &store.vault_root,
+            &project_id,
+            &source,
+            asset_service::GeneratedArtifactSource::NormalizedTemplate,
+            "orphan-normalized-template",
+        )
+        .unwrap();
+        let path =
+            asset_service::resolve_original_path(&store.connection, &store.vault_root, &asset.id)
+                .unwrap();
+
+        assert_eq!(
+            reconcile_generated_assets(&mut store.connection, &store.vault_root).unwrap(),
+            1
+        );
+        assert!(!path.exists());
+        assert_eq!(
+            asset_service::get_asset(&store.connection, &asset.id)
+                .unwrap_err()
+                .code,
+            "ASSET_NOT_FOUND"
+        );
     }
 
     #[test]
@@ -11677,6 +20369,7 @@ mod tests {
                     title: "Quote".to_string(),
                     template_key: document_engine::QUOTE_TEMPLATE_KEY.to_string(),
                     payment_id: None,
+                    acceptance_batch_id: None,
                 },
                 idempotency_key: Uuid::new_v4().to_string(),
                 expected_revision: Some(workspace.revision),
@@ -12342,5 +21035,310 @@ mod tests {
         };
         assert_eq!(error.code, "HOST_INTERNAL");
         assert!(error.message.contains("outside a SQLite transaction"));
+    }
+
+    fn add_test_settlement_deliverable(
+        store: &mut TestStore,
+        project_id: &str,
+        workspace: BusinessWorkspaceRecord,
+        name: &str,
+    ) -> (BusinessWorkspaceRecord, String) {
+        let workspace = store
+            .execute(BusinessWorkspaceCommandEnvelope::UpsertMilestone {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(project_id),
+                payload: UpsertBusinessMilestonePayload {
+                    workspace_id: workspace.id.clone(),
+                    milestone: crate::protocol::BusinessMilestoneInput {
+                        id: None,
+                        title: format!("{name} milestone"),
+                        description: format!("{name} execution batch"),
+                        due_at: None,
+                        acceptance_criteria: "Customer confirmation".to_string(),
+                        required: true,
+                        status: crate::protocol::BusinessMilestoneStatus::Planned,
+                    },
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            })
+            .response
+            .business_workspace;
+        let milestone_id = workspace.milestones.last().unwrap().id.clone();
+        let asset_id = import_test_asset(
+            store,
+            project_id,
+            &format!("{}.txt", name.replace(' ', "-")),
+            name.as_bytes(),
+        );
+        let workspace = store
+            .execute(
+                BusinessWorkspaceCommandEnvelope::RegisterDeliverableVersion {
+                    command_id: Uuid::new_v4().to_string(),
+                    protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                    context: context(project_id),
+                    payload: RegisterBusinessDeliverableVersionPayload {
+                        workspace_id: workspace.id.clone(),
+                        milestone_id: milestone_id.clone(),
+                        deliverable_id: None,
+                        name: name.to_string(),
+                        required: true,
+                        asset_id,
+                        notes: String::new(),
+                    },
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    expected_revision: Some(workspace.revision),
+                    deadline_at: None,
+                },
+            )
+            .response
+            .business_workspace;
+        let deliverable_id = workspace
+            .milestones
+            .iter()
+            .find(|milestone| milestone.id == milestone_id)
+            .unwrap()
+            .deliverables[0]
+            .id
+            .clone();
+        (workspace, deliverable_id)
+    }
+
+    fn settlement_batch_command(
+        project_id: &str,
+        workspace: &BusinessWorkspaceRecord,
+        deliverable_id: &str,
+        period: &str,
+        cadence: crate::protocol::BusinessSettlementCadence,
+        command_id: String,
+        idempotency_key: String,
+    ) -> BusinessWorkspaceCommandEnvelope {
+        BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch {
+            command_id,
+            protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+            context: context(project_id),
+            payload: UpsertBusinessSettlementBatchPayload {
+                workspace_id: workspace.id.clone(),
+                batch: crate::protocol::BusinessSettlementBatchInput {
+                    id: None,
+                    contract_number: "ANNUAL-2026-001".to_string(),
+                    settlement_period: period.to_string(),
+                    cadence,
+                    status: BusinessSettlementBatchStatus::Confirmed,
+                    lines: vec![BusinessSettlementLineInput {
+                        deliverable_id: deliverable_id.to_string(),
+                        contract_quantity_millis: 10_000,
+                        cumulative_executed_millis: 10_000,
+                        current_executed_millis: 10_000,
+                        cumulative_accepted_millis: 10_000,
+                        current_accepted_millis: 10_000,
+                        current_settlement_millis: 10_000,
+                        unit: "item".to_string(),
+                        notes: String::new(),
+                    }],
+                    notes: String::new(),
+                },
+            },
+            idempotency_key,
+            expected_revision: Some(workspace.revision),
+            deadline_at: None,
+        }
+    }
+
+    #[test]
+    fn annual_settlement_runs_two_quarters_and_one_off_without_duplicate_deliverables() {
+        let mut store = TestStore::new();
+        let project_id = store.project_id.clone();
+        let workspace = store
+            .execute(create_command(&project_id))
+            .response
+            .business_workspace;
+        let (workspace, q1_deliverable) =
+            add_test_settlement_deliverable(&mut store, &project_id, workspace, "Q1 film");
+        let (workspace, q2_deliverable) =
+            add_test_settlement_deliverable(&mut store, &project_id, workspace, "Q2 film");
+        let (mut workspace, one_off_deliverable) =
+            add_test_settlement_deliverable(&mut store, &project_id, workspace, "One-off event");
+
+        let stale_workspace = workspace.clone();
+        let mut invalid_quantity = settlement_batch_command(
+            &project_id,
+            &workspace,
+            &q1_deliverable,
+            "2026-Q0",
+            crate::protocol::BusinessSettlementCadence::Quarterly,
+            Uuid::new_v4().to_string(),
+            Uuid::new_v4().to_string(),
+        );
+        if let BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch { payload, .. } =
+            &mut invalid_quantity
+        {
+            payload.batch.lines[0].current_settlement_millis = 10_001;
+        }
+        let invalid_quantity_error =
+            execute_command(&mut store.connection, &store.vault_root, invalid_quantity)
+                .unwrap_err();
+        assert_eq!(
+            invalid_quantity_error.code,
+            "BUSINESS_SETTLEMENT_QUANTITY_INVALID"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+
+        let command_id = Uuid::new_v4().to_string();
+        let idempotency_key = Uuid::new_v4().to_string();
+        let first_command = settlement_batch_command(
+            &project_id,
+            &workspace,
+            &q1_deliverable,
+            "2026-Q1",
+            crate::protocol::BusinessSettlementCadence::Quarterly,
+            command_id,
+            idempotency_key.clone(),
+        );
+        let first = store.execute(first_command.clone()).response;
+        assert!(!first.replayed);
+        let replay = store.execute(first_command).response;
+        assert!(replay.replayed);
+        assert_eq!(replay.business_workspace.settlement_batches.len(), 1);
+        workspace = replay.business_workspace;
+
+        let stale_revision_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            settlement_batch_command(
+                &project_id,
+                &stale_workspace,
+                &q2_deliverable,
+                "2026-Q2-stale",
+                crate::protocol::BusinessSettlementCadence::Quarterly,
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(stale_revision_error.code, "REVISION_CONFLICT");
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+
+        let idempotency_collision = settlement_batch_command(
+            &project_id,
+            &workspace,
+            &q2_deliverable,
+            "2026-Q2-collision",
+            crate::protocol::BusinessSettlementCadence::Quarterly,
+            Uuid::new_v4().to_string(),
+            idempotency_key,
+        );
+        let idempotency_collision_error = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            idempotency_collision,
+        )
+        .unwrap_err();
+        assert_eq!(idempotency_collision_error.code, "IDEMPOTENCY_KEY_REUSED");
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+
+        workspace = store
+            .execute(settlement_batch_command(
+                &project_id,
+                &workspace,
+                &q2_deliverable,
+                "2026-Q2",
+                crate::protocol::BusinessSettlementCadence::Quarterly,
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+            ))
+            .response
+            .business_workspace;
+        workspace = store
+            .execute(settlement_batch_command(
+                &project_id,
+                &workspace,
+                &one_off_deliverable,
+                "2026-07-29",
+                crate::protocol::BusinessSettlementCadence::OneOff,
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+            ))
+            .response
+            .business_workspace;
+        assert_eq!(workspace.settlement_batches.len(), 3);
+        assert!(workspace.settlement_batches.iter().all(|batch| {
+            batch.lines[0].cumulative_settled_millis == 10_000
+                && batch.lines[0].remaining_quantity_millis == 0
+        }));
+
+        let duplicate = execute_command(
+            &mut store.connection,
+            &store.vault_root,
+            settlement_batch_command(
+                &project_id,
+                &workspace,
+                &q1_deliverable,
+                "2026-Q3",
+                crate::protocol::BusinessSettlementCadence::Quarterly,
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate.code,
+            "BUSINESS_SETTLEMENT_DELIVERABLE_ALREADY_RESERVED"
+        );
+        assert_eq!(
+            load_workspace(&store.connection, &workspace.id).unwrap(),
+            workspace
+        );
+
+        let first_batch_id = workspace.settlement_batches[0].id.clone();
+        workspace = store
+            .execute(BusinessWorkspaceCommandEnvelope::VoidSettlementBatch {
+                command_id: Uuid::new_v4().to_string(),
+                protocol_version: BUSINESS_WORKSPACE_PROTOCOL_VERSION.to_string(),
+                context: context(&project_id),
+                payload: VoidBusinessSettlementBatchPayload {
+                    workspace_id: workspace.id.clone(),
+                    batch_id: first_batch_id,
+                    reason: "Customer requested corrected quarter".to_string(),
+                },
+                idempotency_key: Uuid::new_v4().to_string(),
+                expected_revision: Some(workspace.revision),
+                deadline_at: None,
+            })
+            .response
+            .business_workspace;
+        assert_eq!(
+            workspace.settlement_batches[0].status,
+            BusinessSettlementBatchStatus::Voided
+        );
+        workspace = store
+            .execute(settlement_batch_command(
+                &project_id,
+                &workspace,
+                &q1_deliverable,
+                "2026-Q1-corrected",
+                crate::protocol::BusinessSettlementCadence::Quarterly,
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+            ))
+            .response
+            .business_workspace;
+        assert_eq!(workspace.settlement_batches.len(), 4);
+
+        let workspace_id = workspace.id.clone();
+        store.reopen();
+        let persisted = load_workspace(&store.connection, &workspace_id).unwrap();
+        assert_eq!(persisted.settlement_batches, workspace.settlement_batches);
     }
 }

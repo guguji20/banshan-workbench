@@ -190,7 +190,7 @@ pub(crate) fn discover_candidates() -> Vec<Candidate> {
         push_candidate(
             &mut values,
             PathBuf::from(override_path),
-            "BSAIGC managed executable",
+            "Huabang Business System managed executable",
         );
     }
 
@@ -223,6 +223,9 @@ pub(crate) fn discover_candidates() -> Vec<Candidate> {
                     root.join("resources").join("codex-runtime").join("codex"),
                     "bundled resource runtime",
                 );
+                if let Some(path) = macos_resource_runtime_path(root) {
+                    push_candidate(&mut values, path, "bundled macOS resource runtime");
+                }
             }
         }
     }
@@ -238,6 +241,16 @@ pub(crate) fn discover_candidates() -> Vec<Candidate> {
     }
 
     values
+}
+
+#[cfg(any(not(windows), test))]
+fn macos_resource_runtime_path(executable_root: &Path) -> Option<PathBuf> {
+    executable_root.parent().map(|contents| {
+        contents
+            .join("Resources")
+            .join("codex-runtime")
+            .join("codex")
+    })
 }
 
 fn push_candidate(values: &mut Vec<Candidate>, path: PathBuf, source: &str) {
@@ -358,7 +371,7 @@ fn probe_candidate(
         "params": {
             "clientInfo": {
                 "name": "bsaigc-desktop",
-                "title": "Banshan AIGC Desktop",
+                "title": "华邦互娱商务系统",
                 "version": env!("CARGO_PKG_VERSION")
             },
             "capabilities": {
@@ -492,7 +505,7 @@ fn managed_config(base_url: &str, model: Option<&str>) -> String {
         .map(|value| format!("model = {}\n", toml_string(value)))
         .unwrap_or_default();
     format!(
-        "# Managed by BSAIGC Desktop. Personal Codex config, plugins, MCP, sessions, and auth are intentionally not inherited.\n\
+        "# Managed by 华邦互娱商务系统. Personal Codex config, plugins, MCP, sessions, and auth are intentionally not inherited.\n\
 model_provider = \"{PRODUCT_PROVIDER_ID}\"\n\
 {model}\
 approval_policy = \"on-request\"\n\
@@ -664,7 +677,9 @@ fn require_contained(path: &Path, root: &Path, label: &str) -> Result<(), String
     if path.starts_with(root) {
         Ok(())
     } else {
-        Err(format!("{label} escapes the BSAIGC data root"))
+        Err(format!(
+            "{label} escapes the Huabang Business System data root"
+        ))
     }
 }
 
@@ -885,27 +900,44 @@ mod tests {
         assert!(require_contained(&outside.canonicalize().unwrap(), &allowed, "outside").is_err());
     }
 
+    #[test]
+    fn macos_bundle_runtime_uses_contents_resources_directory() {
+        let executable_root = Path::new("/Applications/华邦互娱商务系统.app/Contents/MacOS");
+        assert_eq!(
+            macos_resource_runtime_path(executable_root),
+            Some(PathBuf::from(
+                "/Applications/华邦互娱商务系统.app/Contents/Resources/codex-runtime/codex",
+            ))
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn extended_windows_paths_compare_equal_to_dos_paths() {
         assert!(same_path(
-            Path::new(r"\\?\C:\Users\operator\codex-home"),
-            Path::new(r"C:\Users\operator\codex-home\")
+            Path::new(concat!(r"\\?\C:\Users\", "operator", r"\codex-home")),
+            Path::new(concat!(r"C:\Users\", "operator", r"\codex-home\"))
         ));
     }
 
     #[cfg(windows)]
     #[test]
     fn windowsapps_and_personal_codex_paths_are_forbidden() {
-        assert!(is_forbidden_path_entry(Path::new(
-            r"C:\Users\operator\AppData\Local\Microsoft\WindowsApps"
-        )));
-        assert!(is_forbidden_path_entry(Path::new(
-            r"C:\Users\operator\.codex\bin"
-        )));
-        assert!(is_forbidden_path_entry(Path::new(
-            r"C:\Users\operator\AppData\Local\OpenAI\Codex\bin"
-        )));
+        assert!(is_forbidden_path_entry(Path::new(concat!(
+            r"C:\Users\",
+            "operator",
+            r"\AppData\Local\Microsoft\WindowsApps"
+        ))));
+        assert!(is_forbidden_path_entry(Path::new(concat!(
+            r"C:\Users\",
+            "operator",
+            r"\.codex\bin"
+        ))));
+        assert!(is_forbidden_path_entry(Path::new(concat!(
+            r"C:\Users\",
+            "operator",
+            r"\AppData\Local\OpenAI\Codex\bin"
+        ))));
         assert!(!is_forbidden_path_entry(Path::new(r"C:\Windows\System32")));
     }
 

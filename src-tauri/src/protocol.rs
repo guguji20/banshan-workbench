@@ -12,6 +12,7 @@ pub const BUSINESS_WORKSPACE_PREVIOUS_PROTOCOL_VERSION: &str = "1.5";
 pub const BUSINESS_WORKSPACE_LEGACY_PROTOCOL_VERSION: &str = "1.4";
 pub const CONTRACT_REVIEW_PROTOCOL_VERSION: &str = PROTOCOL_VERSION;
 pub const BACKUP_PROTOCOL_VERSION: &str = PROTOCOL_VERSION;
+pub const SHARED_CASE_PROTOCOL_VERSION: &str = PROTOCOL_VERSION;
 pub const AI_CREDENTIAL_PROTOCOL_VERSION: &str = PROTOCOL_VERSION;
 pub const DESKTOP_SETTINGS_PROTOCOL_VERSION: &str = PROTOCOL_VERSION;
 
@@ -36,6 +37,7 @@ pub const DOMAIN_EVENT_CHANNEL: &str = "bsaigc://domain-event";
 pub const TASK_EVENT_CHANNEL: &str = "bsaigc://task-event";
 pub const ASSET_EVENT_CHANNEL: &str = "bsaigc://asset-event";
 pub const CASE_EVENT_CHANNEL: &str = "bsaigc://case-event";
+pub const SHARED_CASE_EVENT_CHANNEL: &str = "bsaigc://shared-case-event";
 pub const EXECUTION_BRIEF_EVENT_CHANNEL: &str = "bsaigc://execution-brief-event";
 pub const REQUIREMENT_BRIEF_EVENT_CHANNEL: &str = "bsaigc://requirement-brief-event";
 pub const BUSINESS_WORKSPACE_EVENT_CHANNEL: &str = "bsaigc://business-workspace-event";
@@ -534,6 +536,17 @@ pub struct BrainWorkspaceSelection {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BrainProjectWorkspaceBinding {
+    pub project_id: String,
+    pub workspace_token: String,
+    pub display_name: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
 pub struct BrainDroppedItems {
     pub files: Vec<AssetSourceSelection>,
     pub workspace: Option<BrainWorkspaceSelection>,
@@ -785,6 +798,169 @@ pub struct CaseDomainEvent {
     pub occurred_at: i64,
     pub trace_id: String,
     pub case_record: CaseRecord,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum SharedCasePermission {
+    Discover,
+    Preview,
+    Reference,
+    Download,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum SharedCasePublicationStatus {
+    PendingBackup,
+    Published,
+    Withdrawn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct SharedCaseGrant {
+    pub username: String,
+    pub permissions: Vec<SharedCasePermission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct SharedCasePublicationRecord {
+    pub id: String,
+    pub case_id: String,
+    pub asset_id: String,
+    pub project_id: Option<String>,
+    pub title: String,
+    pub client_name: String,
+    pub content_sha256: String,
+    pub remote_object_key: Option<String>,
+    pub remote_etag: Option<String>,
+    pub status: SharedCasePublicationStatus,
+    pub publisher_username: String,
+    pub grants: Vec<SharedCaseGrant>,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    #[ts(type = "number | null")]
+    pub published_at: Option<i64>,
+    #[ts(type = "number | null")]
+    pub withdrawn_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct PublishSharedCasePayload {
+    pub case_id: String,
+    pub grants: Vec<SharedCaseGrant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct UpdateSharedCaseGrantsPayload {
+    pub publication_id: String,
+    pub grants: Vec<SharedCaseGrant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct WithdrawSharedCasePayload {
+    pub publication_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "commandType")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), tag = "commandType", rename_all_fields = "camelCase")]
+pub enum SharedCaseCommandEnvelope {
+    #[serde(rename = "sharedCase.publish", rename_all = "camelCase")]
+    #[ts(rename = "sharedCase.publish")]
+    Publish {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: PublishSharedCasePayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(rename = "sharedCase.updateGrants", rename_all = "camelCase")]
+    #[ts(rename = "sharedCase.updateGrants")]
+    UpdateGrants {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: UpdateSharedCaseGrantsPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(rename = "sharedCase.withdraw", rename_all = "camelCase")]
+    #[ts(rename = "sharedCase.withdraw")]
+    Withdraw {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: WithdrawSharedCasePayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct SharedCaseCommandResponse {
+    pub receipt: CommandReceipt,
+    pub publication: SharedCasePublicationRecord,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"))]
+pub enum SharedCaseEventType {
+    #[serde(rename = "sharedCase.published")]
+    #[ts(rename = "sharedCase.published")]
+    Published,
+    #[serde(rename = "sharedCase.grantsUpdated")]
+    #[ts(rename = "sharedCase.grantsUpdated")]
+    GrantsUpdated,
+    #[serde(rename = "sharedCase.withdrawn")]
+    #[ts(rename = "sharedCase.withdrawn")]
+    Withdrawn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct SharedCaseDomainEvent {
+    #[ts(type = "number")]
+    pub sequence: i64,
+    pub event_id: String,
+    pub event_type: SharedCaseEventType,
+    pub aggregate_id: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[ts(type = "number")]
+    pub occurred_at: i64,
+    pub trace_id: String,
+    pub publication: SharedCasePublicationRecord,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1180,6 +1356,10 @@ pub enum BusinessDocumentFormat {
     Xlsx,
 }
 
+fn default_business_acceptance_output_format() -> BusinessDocumentFormat {
+    BusinessDocumentFormat::Docx
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
@@ -1251,6 +1431,31 @@ pub enum BusinessReceiptKind {
     Reversal,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum BusinessTaxMode {
+    #[default]
+    TaxExclusive,
+    TaxInclusive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessQuotationTotals {
+    #[ts(type = "number")]
+    pub original_total_cents: i64,
+    #[ts(type = "number")]
+    pub project_discount_cents: i64,
+    #[ts(type = "number")]
+    pub tax_exclusive_total_cents: i64,
+    #[ts(type = "number")]
+    pub tax_cents: i64,
+    #[ts(type = "number")]
+    pub final_total_cents: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
@@ -1308,6 +1513,13 @@ pub struct BusinessProfile {
     pub currency: String,
     #[ts(type = "number")]
     pub default_tax_rate_bps: i64,
+    #[serde(default)]
+    pub tax_mode: BusinessTaxMode,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub project_discount_cents: i64,
+    #[serde(default)]
+    pub quotation_totals: Option<BusinessQuotationTotals>,
     #[ts(type = "number | null")]
     pub service_start_at: Option<i64>,
     #[ts(type = "number | null")]
@@ -1342,6 +1554,11 @@ pub struct BusinessProfileInput {
     pub currency: String,
     #[ts(type = "number")]
     pub default_tax_rate_bps: i64,
+    #[serde(default)]
+    pub tax_mode: BusinessTaxMode,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub project_discount_cents: i64,
     #[ts(type = "number | null")]
     pub service_start_at: Option<i64>,
     #[ts(type = "number | null")]
@@ -1356,9 +1573,134 @@ pub struct BusinessProfileInput {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessContractSettlementData {
+    pub contract_title: String,
+    pub contract_number: String,
+    #[ts(type = "number")]
+    pub original_contract_amount_cents: i64,
+    #[ts(type = "number")]
+    pub contract_adjustment_cents: i64,
+    #[ts(type = "number | null")]
+    pub retention_rate_bps: Option<u32>,
+    #[ts(type = "number")]
+    pub final_settlement_amount_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessServiceSettlementItemData {
+    pub service_name: String,
+    pub period: String,
+    pub description: String,
+    pub provided_as_required: Option<bool>,
+    pub evidence_label: String,
+    pub remarks: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessPaymentSettlementItemData {
+    pub name: String,
+    pub unit: String,
+    #[ts(type = "number")]
+    pub contract_unit_price_cents: i64,
+    #[ts(type = "number")]
+    pub original_quantity_millis: i64,
+    #[ts(type = "number")]
+    pub settlement_quantity_millis: i64,
+    pub remarks: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessPaymentApplicationInput {
+    pub payment_id: String,
+    pub contract_title: String,
+    pub contract_number: String,
+    pub work_summary: String,
+    pub payment_period_start: String,
+    pub payment_period_end: String,
+    pub settlement_period: String,
+    #[ts(type = "number")]
+    pub payment_sequence: u32,
+    #[ts(type = "number")]
+    pub invoice_amount_cents: i64,
+    #[ts(type = "number")]
+    pub cumulative_recognized_amount_cents: i64,
+    #[ts(type = "number")]
+    pub withheld_amount_cents: i64,
+    pub application_date: String,
+    pub supplier_bank_routing_number: String,
+    pub settlement_items: Vec<BusinessPaymentSettlementItemData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessPaymentApplicationData {
+    pub payment_id: String,
+    pub contract_title: String,
+    pub contract_number: String,
+    pub work_summary: String,
+    pub payment_period_start: String,
+    pub payment_period_end: String,
+    pub settlement_period: String,
+    #[ts(type = "number")]
+    pub payment_sequence: u32,
+    #[ts(type = "number")]
+    pub invoice_amount_cents: i64,
+    #[ts(type = "number")]
+    pub cumulative_recognized_amount_cents: i64,
+    #[ts(type = "number")]
+    pub withheld_amount_cents: i64,
+    #[ts(type = "number")]
+    pub cumulative_paid_cents: i64,
+    #[ts(type = "number")]
+    pub settlement_total_cents: i64,
+    #[ts(type = "number")]
+    pub remaining_payable_cents: i64,
+    pub application_date: String,
+    pub bank_account_profile_version: String,
+    pub supplier_bank_routing_number: String,
+    pub settlement_items: Vec<BusinessPaymentSettlementItemData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
 pub struct BusinessDocumentSnapshot {
     #[ts(type = "number")]
     pub workspace_revision: i64,
+    #[serde(default)]
+    pub acceptance_batch_id: Option<String>,
+    #[serde(default)]
+    pub acceptance_output_spec_id: Option<String>,
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub acceptance_batch_revision: Option<i64>,
+    #[serde(default)]
+    pub material_bindings: Vec<BusinessAcceptanceMaterialBinding>,
+    #[serde(default)]
+    pub template_asset_id: Option<String>,
+    #[serde(default)]
+    pub template_source_sha256: Option<String>,
+    #[serde(default)]
+    pub template_mapping_version: String,
+    #[serde(default)]
+    pub contract_settlement: Option<BusinessContractSettlementData>,
+    #[serde(default)]
+    pub service_settlement_items: Vec<BusinessServiceSettlementItemData>,
+    #[serde(default)]
+    pub payment_application: Option<BusinessPaymentApplicationData>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub video_completion_acceptance: Option<BusinessVideoCompletionAcceptanceData>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub production_result_confirmation: Option<BusinessProductionResultConfirmationData>,
     #[serde(default)]
     pub customer_id: String,
     #[serde(default)]
@@ -1642,6 +1984,306 @@ pub struct BusinessMilestoneRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum BusinessAcceptanceMaterialKind {
+    Script,
+    Video,
+    Screenshot,
+    BehindTheScenes,
+    PublishingData,
+    Invoice,
+    Proof,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum BusinessAcceptanceBatchStatus {
+    Collecting,
+    DocumentsPrepared,
+    Approved,
+    Generated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum BusinessTemplateVersionStatus {
+    PendingReview,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessTemplateVersionRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub source_asset_id: String,
+    pub source_sha256: String,
+    pub normalized_asset_id: String,
+    pub normalized_sha256: String,
+    pub template_key: String,
+    pub mapping_version: String,
+    pub converter_engine: String,
+    pub converter_version: String,
+    pub converter_policy_version: String,
+    pub status: BusinessTemplateVersionStatus,
+    pub reviewed_by: Option<String>,
+    #[ts(type = "number | null")]
+    pub reviewed_at: Option<i64>,
+    pub review_note: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceRequirementRecord {
+    pub id: String,
+    pub label: String,
+    pub kind: BusinessAcceptanceMaterialKind,
+    #[ts(type = "number")]
+    pub required_group_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessVideoCompletionAcceptanceAssetReference {
+    pub asset_id: String,
+    pub file_name: String,
+    pub sha256: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub external_link: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessVideoCompletionAcceptanceScreenshot {
+    pub asset_id: String,
+    pub sha256: String,
+    pub caption: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessVideoCompletionAcceptanceVideo {
+    pub title: String,
+    pub video_type: String,
+    pub content: String,
+    pub duration: String,
+    pub asset_reference: BusinessVideoCompletionAcceptanceAssetReference,
+    pub screenshots: Vec<BusinessVideoCompletionAcceptanceScreenshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessVideoCompletionAcceptanceDeliveryGroup {
+    pub group_key: String,
+    pub name: String,
+    pub service_description: String,
+    pub videos: Vec<BusinessVideoCompletionAcceptanceVideo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessVideoCompletionAcceptanceData {
+    pub contract_title: String,
+    pub project_title: String,
+    pub completion_date: String,
+    pub delivery_groups: Vec<BusinessVideoCompletionAcceptanceDeliveryGroup>,
+    pub acceptance_conclusion: String,
+    pub manually_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessProductionResultConfirmationAssetReference {
+    pub asset_id: String,
+    pub sha256: String,
+    pub group_key: String,
+    pub file_name: String,
+    pub caption: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessProductionResultConfirmationShot {
+    pub shot_number: String,
+    pub shot_description: String,
+    pub images: Vec<BusinessProductionResultConfirmationAssetReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessProductionResultConfirmationStoryboard {
+    pub storyboard_number: String,
+    pub title: String,
+    pub description: String,
+    pub shots: Vec<BusinessProductionResultConfirmationShot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessProductionResultConfirmationDeliveryItem {
+    pub item_key: String,
+    pub title: String,
+    pub deliverable_summary: String,
+    pub evidence_images: Vec<BusinessProductionResultConfirmationAssetReference>,
+    pub storyboards: Vec<BusinessProductionResultConfirmationStoryboard>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessProductionResultConfirmationData {
+    pub attachment_label: String,
+    pub contract_title: String,
+    pub project_title: String,
+    pub category: String,
+    #[ts(type = "number")]
+    pub payment_amount_cents: i64,
+    pub contract_deliverable_summary: String,
+    pub supplier_legal_name: String,
+    pub procurement_period: String,
+    pub delivery_items: Vec<BusinessProductionResultConfirmationDeliveryItem>,
+    pub acceptance_description: String,
+    pub penalty_or_addition: String,
+    pub completion_date: String,
+    pub acceptance_date: String,
+    pub clean_highlights_confirmed: bool,
+    pub manually_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceOutputSpecRecord {
+    pub id: String,
+    #[serde(default)]
+    pub output_code: String,
+    pub document_number: String,
+    pub title: String,
+    pub template_key: String,
+    #[serde(default)]
+    pub template_asset_id: Option<String>,
+    #[serde(default)]
+    pub template_source_sha256: Option<String>,
+    #[serde(default)]
+    pub template_mapping_version: String,
+    #[serde(default)]
+    pub contract_settlement: Option<BusinessContractSettlementData>,
+    #[serde(default)]
+    pub service_settlement_items: Vec<BusinessServiceSettlementItemData>,
+    #[serde(default)]
+    pub payment_application: Option<BusinessPaymentApplicationData>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub video_completion_acceptance: Option<BusinessVideoCompletionAcceptanceData>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub production_result_confirmation: Option<BusinessProductionResultConfirmationData>,
+    #[serde(default = "default_business_acceptance_output_format")]
+    pub format: BusinessDocumentFormat,
+    #[serde(default)]
+    pub requirement_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceMaterialBinding {
+    pub requirement_id: String,
+    pub asset_id: String,
+    pub sha256: String,
+    pub group_key: String,
+    pub kind: BusinessAcceptanceMaterialKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceMaterialRecord {
+    pub id: String,
+    pub batch_id: String,
+    pub requirement_id: String,
+    pub asset_id: String,
+    pub kind: BusinessAcceptanceMaterialKind,
+    pub group_key: String,
+    pub confirmed: bool,
+    pub duplicate_of_material_id: Option<String>,
+    pub notes: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceBlocker {
+    pub code: String,
+    pub requirement_id: String,
+    pub requirement_label: String,
+    #[ts(type = "number")]
+    pub required_group_count: u32,
+    #[ts(type = "number")]
+    pub provided_group_count: u32,
+    #[ts(type = "number")]
+    pub missing_group_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceReadiness {
+    pub is_ready: bool,
+    pub blockers: Vec<BusinessAcceptanceBlocker>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceBatchRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub label: String,
+    pub requirements: Vec<BusinessAcceptanceRequirementRecord>,
+    pub output_specs: Vec<BusinessAcceptanceOutputSpecRecord>,
+    pub materials: Vec<BusinessAcceptanceMaterialRecord>,
+    pub readiness: BusinessAcceptanceReadiness,
+    pub document_ids: Vec<String>,
+    pub status: BusinessAcceptanceBatchStatus,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
 pub struct BusinessDeliverySignoffRecord {
     pub id: String,
     pub submission_id: String,
@@ -1655,6 +2297,113 @@ pub struct BusinessDeliverySignoffRecord {
     pub recorded_by: String,
     #[ts(type = "number")]
     pub recorded_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum BusinessSettlementCadence {
+    Monthly,
+    Quarterly,
+    PerOrder,
+    #[default]
+    OneOff,
+    Mixed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub enum BusinessSettlementBatchStatus {
+    #[default]
+    Draft,
+    Confirmed,
+    Voided,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessSettlementLineInput {
+    pub deliverable_id: String,
+    #[ts(type = "number")]
+    pub contract_quantity_millis: i64,
+    #[ts(type = "number")]
+    pub cumulative_executed_millis: i64,
+    #[ts(type = "number")]
+    pub current_executed_millis: i64,
+    #[ts(type = "number")]
+    pub cumulative_accepted_millis: i64,
+    #[ts(type = "number")]
+    pub current_accepted_millis: i64,
+    #[ts(type = "number")]
+    pub current_settlement_millis: i64,
+    pub unit: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessSettlementLineRecord {
+    pub deliverable_id: String,
+    pub milestone_id: String,
+    pub deliverable_name: String,
+    #[ts(type = "number")]
+    pub contract_quantity_millis: i64,
+    #[ts(type = "number")]
+    pub cumulative_executed_millis: i64,
+    #[ts(type = "number")]
+    pub current_executed_millis: i64,
+    #[ts(type = "number")]
+    pub cumulative_accepted_millis: i64,
+    #[ts(type = "number")]
+    pub current_accepted_millis: i64,
+    #[ts(type = "number")]
+    pub cumulative_settled_millis: i64,
+    #[ts(type = "number")]
+    pub current_settlement_millis: i64,
+    #[ts(type = "number")]
+    pub remaining_quantity_millis: i64,
+    pub unit: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessSettlementBatchInput {
+    pub id: Option<String>,
+    pub contract_number: String,
+    pub settlement_period: String,
+    pub cadence: BusinessSettlementCadence,
+    pub status: BusinessSettlementBatchStatus,
+    pub lines: Vec<BusinessSettlementLineInput>,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessSettlementBatchRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub contract_number: String,
+    pub settlement_period: String,
+    pub cadence: BusinessSettlementCadence,
+    pub status: BusinessSettlementBatchStatus,
+    pub lines: Vec<BusinessSettlementLineRecord>,
+    pub notes: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    #[ts(type = "number | null")]
+    pub voided_at: Option<i64>,
+    pub voided_by: Option<String>,
+    pub void_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1805,6 +2554,8 @@ pub struct BusinessWorkspaceRecord {
     pub prefill_source_workspace_id: Option<String>,
     pub profile: BusinessProfile,
     pub documents: Vec<BusinessDocumentRecord>,
+    #[serde(default)]
+    pub template_versions: Vec<BusinessTemplateVersionRecord>,
     pub payments: Vec<BusinessPaymentRecord>,
     #[serde(default)]
     pub quote_confirmations: Vec<BusinessQuoteConfirmationRecord>,
@@ -1812,6 +2563,10 @@ pub struct BusinessWorkspaceRecord {
     pub receipts: Vec<BusinessReceiptRecord>,
     #[serde(default)]
     pub milestones: Vec<BusinessMilestoneRecord>,
+    #[serde(default)]
+    pub settlement_batches: Vec<BusinessSettlementBatchRecord>,
+    #[serde(default)]
+    pub acceptance_batches: Vec<BusinessAcceptanceBatchRecord>,
     #[serde(default)]
     pub delivery_submissions: Vec<BusinessDeliverySubmissionRecord>,
     #[serde(default)]
@@ -2034,6 +2789,8 @@ pub struct CreateBusinessDocumentPayload {
     pub title: String,
     pub template_key: String,
     pub payment_id: Option<String>,
+    #[serde(default)]
+    pub acceptance_batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -2086,6 +2843,23 @@ pub struct UpsertBusinessPaymentPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct UpsertBusinessSettlementBatchPayload {
+    pub workspace_id: String,
+    pub batch: BusinessSettlementBatchInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct VoidBusinessSettlementBatchPayload {
+    pub workspace_id: String,
+    pub batch_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
 pub struct ChangeBusinessWorkspaceStatusPayload {
     pub workspace_id: String,
     pub status: BusinessWorkspaceStatus,
@@ -2128,6 +2902,89 @@ pub struct BusinessMilestoneInput {
 pub struct UpsertBusinessMilestonePayload {
     pub workspace_id: String,
     pub milestone: BusinessMilestoneInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceRequirementInput {
+    pub id: Option<String>,
+    pub label: String,
+    pub kind: BusinessAcceptanceMaterialKind,
+    #[ts(type = "number")]
+    pub required_group_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceOutputSpecInput {
+    pub id: Option<String>,
+    pub output_code: String,
+    pub document_number: String,
+    pub title: String,
+    pub template_key: String,
+    #[serde(default)]
+    pub template_asset_id: Option<String>,
+    #[serde(default)]
+    pub template_source_sha256: Option<String>,
+    #[serde(default)]
+    pub template_mapping_version: String,
+    #[serde(default)]
+    pub contract_settlement: Option<BusinessContractSettlementData>,
+    #[serde(default)]
+    pub service_settlement_items: Vec<BusinessServiceSettlementItemData>,
+    #[serde(default)]
+    pub payment_application: Option<BusinessPaymentApplicationInput>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub video_completion_acceptance: Option<BusinessVideoCompletionAcceptanceData>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub production_result_confirmation: Option<BusinessProductionResultConfirmationData>,
+    pub format: BusinessDocumentFormat,
+    pub requirement_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct BusinessAcceptanceMaterialInput {
+    pub id: Option<String>,
+    pub requirement_id: String,
+    pub asset_id: String,
+    pub kind: BusinessAcceptanceMaterialKind,
+    pub group_key: String,
+    pub confirmed: bool,
+    pub duplicate_of_material_id: Option<String>,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct CreateBusinessAcceptanceBatchPayload {
+    pub workspace_id: String,
+    pub label: String,
+    pub requirements: Vec<BusinessAcceptanceRequirementInput>,
+    pub output_specs: Vec<BusinessAcceptanceOutputSpecInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct UpsertBusinessAcceptanceMaterialPayload {
+    pub workspace_id: String,
+    pub batch_id: String,
+    pub material: BusinessAcceptanceMaterialInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct PrepareBusinessAcceptanceDocumentsPayload {
+    pub workspace_id: String,
+    pub batch_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -2273,6 +3130,35 @@ pub struct AdoptLatestConfirmedRequirementPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct NormalizeBusinessLegacyTemplatePayload {
+    pub workspace_id: String,
+    pub source_asset_id: String,
+    pub expected_source_sha256: String,
+    pub template_key: String,
+    pub mapping_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct ApproveBusinessTemplateVersionPayload {
+    pub workspace_id: String,
+    pub template_version_id: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), rename_all = "camelCase")]
+pub struct RejectBusinessTemplateVersionPayload {
+    pub workspace_id: String,
+    pub template_version_id: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "commandType")]
 #[ts(export, export_to = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/bsaigc/"), tag = "commandType", rename_all_fields = "camelCase")]
 pub enum BusinessWorkspaceCommandEnvelope {
@@ -2376,6 +3262,39 @@ pub enum BusinessWorkspaceCommandEnvelope {
         #[ts(type = "number | null")]
         deadline_at: Option<i64>,
     },
+
+    #[serde(
+        rename = "businessWorkspace.upsertSettlementBatch",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.upsertSettlementBatch")]
+    UpsertSettlementBatch {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: UpsertBusinessSettlementBatchPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(
+        rename = "businessWorkspace.voidSettlementBatch",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.voidSettlementBatch")]
+    VoidSettlementBatch {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: VoidBusinessSettlementBatchPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
     #[serde(rename = "businessWorkspace.confirmQuote", rename_all = "camelCase")]
     #[ts(rename = "businessWorkspace.confirmQuote")]
     ConfirmQuote {
@@ -2464,6 +3383,54 @@ pub enum BusinessWorkspaceCommandEnvelope {
         protocol_version: String,
         context: OperationContext,
         payload: UpsertBusinessMilestonePayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(
+        rename = "businessWorkspace.createAcceptanceBatch",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.createAcceptanceBatch")]
+    CreateAcceptanceBatch {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: CreateBusinessAcceptanceBatchPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(
+        rename = "businessWorkspace.prepareAcceptanceDocuments",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.prepareAcceptanceDocuments")]
+    PrepareAcceptanceDocuments {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: PrepareBusinessAcceptanceDocumentsPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(
+        rename = "businessWorkspace.upsertAcceptanceMaterial",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.upsertAcceptanceMaterial")]
+    UpsertAcceptanceMaterial {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: UpsertBusinessAcceptanceMaterialPayload,
         idempotency_key: String,
         #[ts(type = "number | null")]
         expected_revision: Option<i64>,
@@ -2582,6 +3549,54 @@ pub enum BusinessWorkspaceCommandEnvelope {
         #[ts(type = "number | null")]
         deadline_at: Option<i64>,
     },
+    #[serde(
+        rename = "businessWorkspace.normalizeLegacyTemplate",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.normalizeLegacyTemplate")]
+    NormalizeLegacyTemplate {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: NormalizeBusinessLegacyTemplatePayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(
+        rename = "businessWorkspace.approveTemplateVersion",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.approveTemplateVersion")]
+    ApproveTemplateVersion {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: ApproveBusinessTemplateVersionPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
+    #[serde(
+        rename = "businessWorkspace.rejectTemplateVersion",
+        rename_all = "camelCase"
+    )]
+    #[ts(rename = "businessWorkspace.rejectTemplateVersion")]
+    RejectTemplateVersion {
+        command_id: String,
+        protocol_version: String,
+        context: OperationContext,
+        payload: RejectBusinessTemplateVersionPayload,
+        idempotency_key: String,
+        #[ts(type = "number | null")]
+        expected_revision: Option<i64>,
+        #[ts(type = "number | null")]
+        deadline_at: Option<i64>,
+    },
     #[serde(rename = "businessWorkspace.changeStatus", rename_all = "camelCase")]
     #[ts(rename = "businessWorkspace.changeStatus")]
     ChangeStatus {
@@ -2630,6 +3645,12 @@ pub enum BusinessWorkspaceEventType {
     #[serde(rename = "businessWorkspace.paymentUpserted")]
     #[ts(rename = "businessWorkspace.paymentUpserted")]
     PaymentUpserted,
+    #[serde(rename = "businessWorkspace.settlementBatchUpserted")]
+    #[ts(rename = "businessWorkspace.settlementBatchUpserted")]
+    SettlementBatchUpserted,
+    #[serde(rename = "businessWorkspace.settlementBatchVoided")]
+    #[ts(rename = "businessWorkspace.settlementBatchVoided")]
+    SettlementBatchVoided,
     #[serde(rename = "businessWorkspace.quoteConfirmed")]
     #[ts(rename = "businessWorkspace.quoteConfirmed")]
     QuoteConfirmed,
@@ -2651,6 +3672,15 @@ pub enum BusinessWorkspaceEventType {
     #[serde(rename = "businessWorkspace.milestoneUpserted")]
     #[ts(rename = "businessWorkspace.milestoneUpserted")]
     MilestoneUpserted,
+    #[serde(rename = "businessWorkspace.acceptanceBatchCreated")]
+    #[ts(rename = "businessWorkspace.acceptanceBatchCreated")]
+    AcceptanceBatchCreated,
+    #[serde(rename = "businessWorkspace.acceptanceDocumentsPrepared")]
+    #[ts(rename = "businessWorkspace.acceptanceDocumentsPrepared")]
+    AcceptanceDocumentsPrepared,
+    #[serde(rename = "businessWorkspace.acceptanceMaterialUpserted")]
+    #[ts(rename = "businessWorkspace.acceptanceMaterialUpserted")]
+    AcceptanceMaterialUpserted,
     #[serde(rename = "businessWorkspace.deliverableVersionRegistered")]
     #[ts(rename = "businessWorkspace.deliverableVersionRegistered")]
     DeliverableVersionRegistered,
@@ -2672,6 +3702,15 @@ pub enum BusinessWorkspaceEventType {
     #[serde(rename = "businessWorkspace.archiveSnapshotPrepared")]
     #[ts(rename = "businessWorkspace.archiveSnapshotPrepared")]
     ArchiveSnapshotPrepared,
+    #[serde(rename = "businessWorkspace.templateVersionNormalized")]
+    #[ts(rename = "businessWorkspace.templateVersionNormalized")]
+    TemplateVersionNormalized,
+    #[serde(rename = "businessWorkspace.templateVersionApproved")]
+    #[ts(rename = "businessWorkspace.templateVersionApproved")]
+    TemplateVersionApproved,
+    #[serde(rename = "businessWorkspace.templateVersionRejected")]
+    #[ts(rename = "businessWorkspace.templateVersionRejected")]
+    TemplateVersionRejected,
     #[serde(rename = "businessWorkspace.statusChanged")]
     #[ts(rename = "businessWorkspace.statusChanged")]
     StatusChanged,
@@ -4161,6 +5200,8 @@ pub enum BrainAccessMode {
 pub struct BrainTurnContext {
     pub workspace_token: Option<String>,
     pub access_mode: BrainAccessMode,
+    #[ts(optional)]
+    pub web_enabled: Option<bool>,
     pub attachment_asset_ids: Vec<String>,
 }
 
@@ -4762,6 +5803,233 @@ mod tests {
     use super::*;
 
     #[test]
+    fn brain_turn_context_defaults_web_access_to_disabled() {
+        let context: BrainTurnContext = serde_json::from_value(serde_json::json!({
+            "workspaceToken": null,
+            "accessMode": "requestApproval",
+            "attachmentAssetIds": []
+        }))
+        .expect("deserialize legacy brain turn context");
+
+        assert!(!context.web_enabled.unwrap_or(false));
+    }
+
+    #[test]
+    fn legacy_acceptance_output_specs_and_document_snapshots_default_new_fields() {
+        let output_spec: BusinessAcceptanceOutputSpecRecord =
+            serde_json::from_value(serde_json::json!({
+                "id": "legacy-output",
+                "documentNumber": "ACC-1",
+                "title": "Legacy acceptance",
+                "templateKey": "business-acceptance-v1"
+            }))
+            .unwrap();
+        assert!(output_spec.output_code.is_empty());
+        assert_eq!(output_spec.format, BusinessDocumentFormat::Docx);
+        assert!(output_spec.requirement_ids.is_empty());
+        assert_eq!(output_spec.template_asset_id, None);
+        assert_eq!(output_spec.template_source_sha256, None);
+        assert!(output_spec.template_mapping_version.is_empty());
+        assert_eq!(output_spec.contract_settlement, None);
+        assert!(output_spec.service_settlement_items.is_empty());
+        assert_eq!(output_spec.video_completion_acceptance, None);
+        assert_eq!(output_spec.production_result_confirmation, None);
+
+        let output_spec_input: BusinessAcceptanceOutputSpecInput =
+            serde_json::from_value(serde_json::json!({
+                "id": null,
+                "outputCode": "legacy-output",
+                "documentNumber": "ACC-1",
+                "title": "Legacy acceptance",
+                "templateKey": "business-acceptance-v1",
+                "format": "docx",
+                "requirementIds": []
+            }))
+            .unwrap();
+        assert_eq!(output_spec_input.video_completion_acceptance, None);
+        assert_eq!(output_spec_input.production_result_confirmation, None);
+
+        let snapshot: BusinessDocumentSnapshot = serde_json::from_value(serde_json::json!({
+            "workspaceRevision": 1,
+            "profile": BusinessProfile::default(),
+            "payment": null
+        }))
+        .unwrap();
+        assert_eq!(snapshot.acceptance_output_spec_id, None);
+        assert_eq!(snapshot.acceptance_batch_revision, None);
+        assert!(snapshot.material_bindings.is_empty());
+        assert_eq!(snapshot.template_asset_id, None);
+        assert_eq!(snapshot.template_source_sha256, None);
+        assert!(snapshot.template_mapping_version.is_empty());
+        assert_eq!(snapshot.contract_settlement, None);
+        assert!(snapshot.service_settlement_items.is_empty());
+        assert_eq!(snapshot.video_completion_acceptance, None);
+        assert_eq!(snapshot.production_result_confirmation, None);
+    }
+
+    #[test]
+    fn video_completion_acceptance_contract_round_trips_with_camel_case_fields() {
+        let contract = BusinessVideoCompletionAcceptanceData {
+            contract_title: "年度视频制作服务合同".to_owned(),
+            project_title: "白鹅潭项目".to_owned(),
+            completion_date: "2026-07-29".to_owned(),
+            delivery_groups: vec![BusinessVideoCompletionAcceptanceDeliveryGroup {
+                group_key: "delivery-group-1".to_owned(),
+                name: "第一批交付".to_owned(),
+                service_description: "视频策划、剪辑与成片交付".to_owned(),
+                videos: vec![BusinessVideoCompletionAcceptanceVideo {
+                    title: "项目宣传片".to_owned(),
+                    video_type: "横版宣传片".to_owned(),
+                    content: "项目整体形象展示".to_owned(),
+                    duration: "03:30".to_owned(),
+                    asset_reference: BusinessVideoCompletionAcceptanceAssetReference {
+                        asset_id: "asset-video-1".to_owned(),
+                        file_name: "project-promo.mp4".to_owned(),
+                        sha256: "A".repeat(64),
+                        external_link: Some("https://example.invalid/project-promo".to_owned()),
+                    },
+                    screenshots: vec![BusinessVideoCompletionAcceptanceScreenshot {
+                        asset_id: "asset-shot-1".to_owned(),
+                        sha256: "B".repeat(64),
+                        caption: "项目主视觉".to_owned(),
+                    }],
+                }],
+            }],
+            acceptance_conclusion: "本批次交付内容验收通过".to_owned(),
+            manually_confirmed: true,
+        };
+
+        let serialized = serde_json::to_value(&contract).unwrap();
+        assert_eq!(serialized["contractTitle"], "年度视频制作服务合同");
+        assert_eq!(
+            serialized["deliveryGroups"][0]["groupKey"],
+            "delivery-group-1"
+        );
+        assert_eq!(
+            serialized["deliveryGroups"][0]["videos"][0]["assetReference"]["assetId"],
+            "asset-video-1"
+        );
+        assert_eq!(
+            serialized["deliveryGroups"][0]["videos"][0]["screenshots"][0]["assetId"],
+            "asset-shot-1"
+        );
+
+        let decoded: BusinessVideoCompletionAcceptanceData =
+            serde_json::from_value(serialized).unwrap();
+        assert_eq!(decoded, contract);
+    }
+
+    #[test]
+    fn production_result_confirmation_contract_round_trips_with_camel_case_fields() {
+        let contract = BusinessProductionResultConfirmationData {
+            attachment_label: "附件一".to_owned(),
+            contract_title: "年度制作服务合同".to_owned(),
+            project_title: "白鹅潭制作项目".to_owned(),
+            category: "视频制作".to_owned(),
+            payment_amount_cents: 2_680_000,
+            contract_deliverable_summary: "完成分镜、拍摄、剪辑及成片交付".to_owned(),
+            supplier_legal_name: "广州示例文化有限公司".to_owned(),
+            procurement_period: "2026-06-01 至 2026-07-20".to_owned(),
+            delivery_items: vec![BusinessProductionResultConfirmationDeliveryItem {
+                item_key: "delivery-item-1".to_owned(),
+                title: "项目宣传片".to_owned(),
+                deliverable_summary: "一条三分钟横版宣传片".to_owned(),
+                evidence_images: vec![BusinessProductionResultConfirmationAssetReference {
+                    asset_id: "asset-evidence-1".to_owned(),
+                    sha256: "D".repeat(64),
+                    group_key: "delivery-item-1/evidence-1".to_owned(),
+                    file_name: "delivery-evidence.jpg".to_owned(),
+                    caption: "交付成果主画面".to_owned(),
+                }],
+                storyboards: vec![BusinessProductionResultConfirmationStoryboard {
+                    storyboard_number: "SB-01".to_owned(),
+                    title: "项目开篇".to_owned(),
+                    description: "建立项目区位与整体氛围".to_owned(),
+                    shots: vec![BusinessProductionResultConfirmationShot {
+                        shot_number: "SHOT-01".to_owned(),
+                        shot_description: "航拍项目全景并切入主视觉".to_owned(),
+                        images: vec![BusinessProductionResultConfirmationAssetReference {
+                            asset_id: "asset-image-1".to_owned(),
+                            sha256: "C".repeat(64),
+                            group_key: "delivery-item-1/storyboard-SB-01/shot-SHOT-01".to_owned(),
+                            file_name: "shot-01.jpg".to_owned(),
+                            caption: "项目全景".to_owned(),
+                        }],
+                    }],
+                }],
+            }],
+            acceptance_description: "制作成果与合同约定一致，验收通过".to_owned(),
+            penalty_or_addition: "无扣罚或增补".to_owned(),
+            completion_date: "2026-07-20".to_owned(),
+            acceptance_date: "2026-07-29".to_owned(),
+            clean_highlights_confirmed: true,
+            manually_confirmed: true,
+        };
+
+        let serialized = serde_json::to_value(&contract).unwrap();
+        assert_eq!(serialized["attachmentLabel"], "附件一");
+        assert_eq!(serialized["paymentAmountCents"], 2_680_000);
+        assert_eq!(
+            serialized["deliveryItems"][0]["evidenceImages"][0]["groupKey"],
+            "delivery-item-1/evidence-1"
+        );
+        assert_eq!(
+            serialized["deliveryItems"][0]["storyboards"][0]["shots"][0]["images"][0]["assetId"],
+            "asset-image-1"
+        );
+        assert_eq!(
+            serialized["deliveryItems"][0]["storyboards"][0]["shots"][0]["images"][0]["groupKey"],
+            "delivery-item-1/storyboard-SB-01/shot-SHOT-01"
+        );
+        assert_eq!(serialized["cleanHighlightsConfirmed"], true);
+        assert!(serialized.get("attachment_label").is_none());
+        assert!(serialized.to_string().find("bytes").is_none());
+        assert!(serialized.to_string().find("path").is_none());
+
+        let decoded: BusinessProductionResultConfirmationData =
+            serde_json::from_value(serialized).unwrap();
+        assert_eq!(decoded, contract);
+    }
+
+    #[test]
+    fn legacy_business_profiles_default_new_quotation_fields() {
+        let profile = BusinessProfile {
+            tax_mode: BusinessTaxMode::TaxInclusive,
+            project_discount_cents: 490_000,
+            quotation_totals: Some(BusinessQuotationTotals {
+                original_total_cents: 8_480_000,
+                project_discount_cents: 490_000,
+                tax_exclusive_total_cents: 7_537_736,
+                tax_cents: 452_264,
+                final_total_cents: 7_990_000,
+            }),
+            ..BusinessProfile::default()
+        };
+        let mut profile_json = serde_json::to_value(profile).unwrap();
+        let profile_object = profile_json.as_object_mut().unwrap();
+        profile_object.remove("taxMode");
+        profile_object.remove("projectDiscountCents");
+        profile_object.remove("quotationTotals");
+        let decoded_profile: BusinessProfile = serde_json::from_value(profile_json).unwrap();
+        assert_eq!(decoded_profile.tax_mode, BusinessTaxMode::TaxExclusive);
+        assert_eq!(decoded_profile.project_discount_cents, 0);
+        assert_eq!(decoded_profile.quotation_totals, None);
+
+        let input = BusinessProfileInput {
+            tax_mode: BusinessTaxMode::TaxInclusive,
+            project_discount_cents: 490_000,
+            ..BusinessProfileInput::default()
+        };
+        let mut input_json = serde_json::to_value(input).unwrap();
+        let input_object = input_json.as_object_mut().unwrap();
+        input_object.remove("taxMode");
+        input_object.remove("projectDiscountCents");
+        let decoded_input: BusinessProfileInput = serde_json::from_value(input_json).unwrap();
+        assert_eq!(decoded_input.tax_mode, BusinessTaxMode::TaxExclusive);
+        assert_eq!(decoded_input.project_discount_cents, 0);
+    }
+
+    #[test]
     fn legacy_surface_protocol_compatibility_is_bounded() {
         for supported in [
             LEGACY_PROTOCOL_VERSION,
@@ -4810,6 +6078,146 @@ mod tests {
         let round_trip: BackupCommandEnvelope =
             serde_json::from_value(serialized).expect("deserialize restore command");
         assert_eq!(round_trip, command);
+    }
+
+    fn business_template_operation_context() -> OperationContext {
+        OperationContext {
+            actor_id: "template-reviewer".to_string(),
+            account_id: Some("agency-1".to_string()),
+            project_id: Some("project-1".to_string()),
+            window_id: "business-workbench".to_string(),
+            trace_id: "template-trace-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn business_template_version_json_contract_is_stable() {
+        let record = BusinessTemplateVersionRecord {
+            id: "template-version-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            source_asset_id: "source-asset-1".to_string(),
+            source_sha256: "a".repeat(64),
+            normalized_asset_id: "normalized-asset-1".to_string(),
+            normalized_sha256: "b".repeat(64),
+            template_key: "payment-application-v1".to_string(),
+            mapping_version: "mapping-v1".to_string(),
+            converter_engine: "MicrosoftWord".to_string(),
+            converter_version: "16.0".to_string(),
+            converter_policy_version: "word-only-v1".to_string(),
+            status: BusinessTemplateVersionStatus::PendingReview,
+            reviewed_by: None,
+            reviewed_at: None,
+            review_note: String::new(),
+            revision: 1,
+            created_at: 100,
+            updated_at: 100,
+        };
+
+        let serialized = serde_json::to_value(&record).expect("serialize template version");
+        assert_eq!(serialized["workspaceId"], "workspace-1");
+        assert_eq!(serialized["sourceAssetId"], "source-asset-1");
+        assert_eq!(serialized["normalizedAssetId"], "normalized-asset-1");
+        assert_eq!(serialized["converterPolicyVersion"], "word-only-v1");
+        assert_eq!(serialized["status"], "pendingReview");
+        assert_eq!(serialized["reviewedBy"], serde_json::Value::Null);
+
+        let round_trip: BusinessTemplateVersionRecord =
+            serde_json::from_value(serialized).expect("deserialize template version");
+        assert_eq!(round_trip, record);
+    }
+
+    #[test]
+    fn business_template_command_json_contract_is_stable() {
+        let commands = [
+            (
+                BusinessWorkspaceCommandEnvelope::NormalizeLegacyTemplate {
+                    command_id: "normalize-template-1".to_string(),
+                    protocol_version: PROTOCOL_VERSION.to_string(),
+                    context: business_template_operation_context(),
+                    payload: NormalizeBusinessLegacyTemplatePayload {
+                        workspace_id: "workspace-1".to_string(),
+                        source_asset_id: "source-asset-1".to_string(),
+                        expected_source_sha256: "a".repeat(64),
+                        template_key: "payment-application-v1".to_string(),
+                        mapping_version: "mapping-v1".to_string(),
+                    },
+                    idempotency_key: "normalize-template-idempotency-1".to_string(),
+                    expected_revision: Some(7),
+                    deadline_at: Some(10_000),
+                },
+                "businessWorkspace.normalizeLegacyTemplate",
+                "sourceAssetId",
+                "source-asset-1",
+            ),
+            (
+                BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion {
+                    command_id: "approve-template-1".to_string(),
+                    protocol_version: PROTOCOL_VERSION.to_string(),
+                    context: business_template_operation_context(),
+                    payload: ApproveBusinessTemplateVersionPayload {
+                        workspace_id: "workspace-1".to_string(),
+                        template_version_id: "template-version-1".to_string(),
+                        note: "approved".to_string(),
+                    },
+                    idempotency_key: "approve-template-idempotency-1".to_string(),
+                    expected_revision: Some(8),
+                    deadline_at: None,
+                },
+                "businessWorkspace.approveTemplateVersion",
+                "templateVersionId",
+                "template-version-1",
+            ),
+            (
+                BusinessWorkspaceCommandEnvelope::RejectTemplateVersion {
+                    command_id: "reject-template-1".to_string(),
+                    protocol_version: PROTOCOL_VERSION.to_string(),
+                    context: business_template_operation_context(),
+                    payload: RejectBusinessTemplateVersionPayload {
+                        workspace_id: "workspace-1".to_string(),
+                        template_version_id: "template-version-2".to_string(),
+                        note: "unsafe content".to_string(),
+                    },
+                    idempotency_key: "reject-template-idempotency-1".to_string(),
+                    expected_revision: Some(9),
+                    deadline_at: None,
+                },
+                "businessWorkspace.rejectTemplateVersion",
+                "templateVersionId",
+                "template-version-2",
+            ),
+        ];
+
+        for (command, command_type, payload_field, payload_value) in commands {
+            let serialized = serde_json::to_value(&command).expect("serialize template command");
+            assert_eq!(serialized["commandType"], command_type);
+            assert_eq!(serialized["payload"][payload_field], payload_value);
+            let round_trip: BusinessWorkspaceCommandEnvelope =
+                serde_json::from_value(serialized).expect("deserialize template command");
+            assert_eq!(round_trip, command);
+        }
+    }
+
+    #[test]
+    fn business_template_event_json_contract_is_stable() {
+        for (event_type, expected) in [
+            (
+                BusinessWorkspaceEventType::TemplateVersionNormalized,
+                "businessWorkspace.templateVersionNormalized",
+            ),
+            (
+                BusinessWorkspaceEventType::TemplateVersionApproved,
+                "businessWorkspace.templateVersionApproved",
+            ),
+            (
+                BusinessWorkspaceEventType::TemplateVersionRejected,
+                "businessWorkspace.templateVersionRejected",
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(event_type).expect("serialize template event"),
+                expected
+            );
+        }
     }
 
     #[test]

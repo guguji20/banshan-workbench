@@ -909,6 +909,9 @@ mod tests {
             matches!(
                 engine.get_task(&healthy.id).unwrap().status,
                 TaskStatus::Succeeded
+            ) && matches!(
+                engine.get_task(&panicked.id).unwrap().status,
+                TaskStatus::Failed
             )
         });
         let panicked = engine.get_task(&panicked.id).unwrap();

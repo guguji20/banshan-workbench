@@ -6,12 +6,12 @@
 const T = 1_784_700_000_000; // 2026-07 前后的毫秒时间戳基准
 const day = 86_400_000;
 
-const receipt = (commandType: string) => ({
+const receipt = (commandType: string, revision = 1) => ({
   commandId: crypto.randomUUID(),
   idempotencyKey: crypto.randomUUID(),
   commandType,
   aggregateId: "demo",
-  revision: 1,
+  revision,
   lastEventSequence: 0,
   completedAt: T,
 });
@@ -203,6 +203,17 @@ const brainTurns = [
     error: null,
     createdAt: T - 3700_000,
     updatedAt: T - 3600_000,
+  },
+  {
+    id: "turn-web-1",
+    threadId: "thread-1",
+    status: "completed",
+    inputText: "搜索公开的无障碍设计规范并保留来源",
+    assistantText:
+      "公开资料检索结果：W3C WCAG 2.2 是公开标准，请以来源页面为准：https://www.w3.org/TR/WCAG22/。该来源仅供参考，外部未确认，不会自动覆盖正式业务数据。",
+    error: null,
+    createdAt: T - 1800_000,
+    updatedAt: T - 1700_000,
   },
 ];
 
@@ -490,6 +501,7 @@ const workspace = {
   prefillSourceWorkspaceId: null,
   profile,
   documents: [quoteDoc, contractDoc, paymentRequestDoc, acceptanceDoc],
+  templateVersions: [],
   payments: [payment1, payment2],
   quoteConfirmations: [
     {
@@ -581,6 +593,8 @@ const workspace = {
       updatedAt: T - day,
     },
   ],
+  settlementBatches: [],
+  acceptanceBatches: [],
   deliverySubmissions: [
     {
       id: "sub-1",
@@ -649,6 +663,586 @@ const workspace = {
   createdAt: T - 20 * day,
   updatedAt: T - day,
 };
+
+type PreviewAcceptanceRequirement = {
+  id: string;
+  label: string;
+  kind: string;
+  requiredGroupCount: number;
+};
+
+type PreviewAcceptanceOutputSpec = {
+  id: string;
+  outputCode: string;
+  documentNumber: string;
+  title: string;
+  templateKey: string;
+  templateAssetId: string | null;
+  templateSourceSha256: string | null;
+  templateMappingVersion: string;
+  contractSettlement: unknown | null;
+  serviceSettlementItems: unknown[];
+  paymentApplication: unknown | null;
+  videoCompletionAcceptance?: unknown;
+  productionResultConfirmation?: unknown;
+  format: string;
+  requirementIds: string[];
+};
+
+type PreviewAcceptanceMaterial = {
+  id: string;
+  batchId: string;
+  requirementId: string;
+  assetId: string;
+  kind: string;
+  groupKey: string;
+  confirmed: boolean;
+  duplicateOfMaterialId: string | null;
+  notes: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type PreviewAcceptanceBatch = {
+  id: string;
+  workspaceId: string;
+  label: string;
+  requirements: PreviewAcceptanceRequirement[];
+  outputSpecs: PreviewAcceptanceOutputSpec[];
+  materials: PreviewAcceptanceMaterial[];
+  readiness: {
+    isReady: boolean;
+    blockers: Array<{
+      code: string;
+      requirementId: string;
+      requirementLabel: string;
+      requiredGroupCount: number;
+      providedGroupCount: number;
+      missingGroupCount: number;
+    }>;
+  };
+  documentIds: string[];
+  status: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type PreviewBusinessDocument = {
+  id: string;
+  kind: string;
+  sequenceNumber: number;
+  documentNumber: string;
+  title: string;
+  templateKey: string;
+  status: string;
+  snapshot: Record<string, unknown>;
+  outputAssetId: string | null;
+  outputFormat: string | null;
+  sourceAssetId: string | null;
+  reviewId: string | null;
+  reportAssetId: string | null;
+  evidence: unknown | null;
+  manualWaiver: unknown | null;
+  voidedAt: number | null;
+  voidedBy: string | null;
+  voidReason: string;
+  approvedAt: number | null;
+  approvedBy: string | null;
+  generatedAt: number | null;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type PreviewAsset = {
+  id: string;
+  projectId: string;
+  originalName: string;
+  kind: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  status: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  previewAvailable: boolean;
+};
+
+type PreviewBusinessCommand = {
+  commandType: string;
+  payload: Record<string, unknown>;
+  context?: { actorId?: string };
+};
+
+const previewSearchParams = new URLSearchParams(window.location.search);
+const previewBusinessWorkspaceDelayMs = Math.min(
+  10_000,
+  Math.max(0, Number.parseInt(previewSearchParams.get("previewDelayMs") ?? "0", 10) || 0),
+);
+const previewFailOnceCommandType = previewSearchParams.get("previewFailOnce")?.trim() || null;
+const previewFailedCommandTypes = new Set<string>();
+
+const previewWorkspace = workspace as unknown as {
+  id: string;
+  projectId: string;
+  customerId: string;
+  customer: typeof customer;
+  profile: typeof profile;
+  documents: PreviewBusinessDocument[];
+  acceptanceBatches: PreviewAcceptanceBatch[];
+  revision: number;
+  updatedAt: number;
+};
+const previewAssets = assets as unknown as PreviewAsset[];
+
+function previewAcceptanceId(prefix: string): string {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function previewAcceptanceError(code: string, message: string): never {
+  throw { code, message, retryable: false };
+}
+
+async function applyPreviewBusinessWorkspaceControls(command: PreviewBusinessCommand | undefined): Promise<void> {
+  if (previewBusinessWorkspaceDelayMs > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, previewBusinessWorkspaceDelayMs));
+  }
+  if (
+    command
+    && previewFailOnceCommandType === command.commandType
+    && !previewFailedCommandTypes.has(command.commandType)
+  ) {
+    previewFailedCommandTypes.add(command.commandType);
+    throw {
+      code: "PREVIEW_INJECTED_FAILURE",
+      message: `Preview injected first-attempt failure for ${command.commandType}`,
+      retryable: true,
+    };
+  }
+}
+
+type PreviewCanonicalAssetKind = "image" | "video" | "audio" | "document" | "other";
+
+function previewAssetKindFromMime(mimeType: string): PreviewCanonicalAssetKind | null {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  if (!normalizedMimeType) return null;
+  if (normalizedMimeType.startsWith("image/")) return "image";
+  if (normalizedMimeType.startsWith("video/")) return "video";
+  if (normalizedMimeType.startsWith("audio/")) return "audio";
+  if (
+    normalizedMimeType === "application/pdf"
+    || normalizedMimeType.startsWith("text/")
+    || normalizedMimeType.includes("document")
+    || normalizedMimeType.includes("sheet")
+    || normalizedMimeType.includes("presentation")
+    || normalizedMimeType.includes("word")
+    || normalizedMimeType.includes("excel")
+    || normalizedMimeType.endsWith("+xml")
+    || normalizedMimeType === "application/json"
+    || normalizedMimeType === "application/xml"
+    || normalizedMimeType === "application/yaml"
+  ) {
+    return "document";
+  }
+  return "other";
+}
+
+function previewAcceptanceKindAllowsAssetKind(
+  requirementKind: PreviewAcceptanceRequirement["kind"],
+  assetKind: PreviewCanonicalAssetKind,
+): boolean {
+  switch (requirementKind) {
+    case "script":
+    case "invoice":
+      return assetKind === "document";
+    case "video":
+      return assetKind === "video";
+    case "screenshot":
+      return assetKind === "image";
+    case "behindTheScenes":
+      return assetKind === "image" || assetKind === "video";
+    case "publishingData":
+    case "proof":
+      return assetKind === "document" || assetKind === "image";
+    case "other":
+      return assetKind === "other";
+    default:
+      return false;
+  }
+}
+
+function previewAcceptanceAssetMatchesRequirement(
+  asset: PreviewAsset,
+  requirementKind: PreviewAcceptanceRequirement["kind"],
+): boolean {
+  const declaredAssetKind = ["image", "video", "audio", "document", "other"].includes(asset.kind)
+    ? asset.kind as PreviewCanonicalAssetKind
+    : previewAssetKindFromMime(asset.mimeType);
+  const mimeAssetKind = previewAssetKindFromMime(asset.mimeType);
+  return Boolean(
+    declaredAssetKind
+    && previewAcceptanceKindAllowsAssetKind(requirementKind, declaredAssetKind)
+    && (!mimeAssetKind || previewAcceptanceKindAllowsAssetKind(requirementKind, mimeAssetKind)),
+  );
+}
+
+function requirePreviewAcceptanceBatch(batchId: string): PreviewAcceptanceBatch {
+  const batch = previewWorkspace.acceptanceBatches.find((candidate) => candidate.id === batchId);
+  if (!batch) {
+    previewAcceptanceError("BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND", "acceptance batch does not exist in this workspace");
+  }
+  return batch;
+}
+
+function readyPreviewAcceptanceMaterials(batch: PreviewAcceptanceBatch): PreviewAcceptanceMaterial[] {
+  return batch.materials.filter((material) => {
+    const asset = previewAssets.find((candidate) => candidate.id === material.assetId);
+    return material.confirmed && !material.duplicateOfMaterialId && asset?.status === "ready";
+  });
+}
+
+function refreshPreviewAcceptanceReadiness(batch: PreviewAcceptanceBatch): void {
+  const materials = readyPreviewAcceptanceMaterials(batch);
+  const blockers = batch.requirements.flatMap((requirement) => {
+    const providedGroupCount = new Set(
+      materials
+        .filter((material) => material.requirementId === requirement.id)
+        .map((material) => material.groupKey || material.id),
+    ).size;
+    if (providedGroupCount >= requirement.requiredGroupCount) return [];
+    return [{
+      code: "missingMaterialGroups",
+      requirementId: requirement.id,
+      requirementLabel: requirement.label,
+      requiredGroupCount: requirement.requiredGroupCount,
+      providedGroupCount,
+      missingGroupCount: requirement.requiredGroupCount - providedGroupCount,
+    }];
+  });
+  batch.readiness = { isReady: blockers.length === 0, blockers };
+}
+
+function previewAcceptanceMaterialBindings(
+  batch: PreviewAcceptanceBatch,
+  requirementIds: string[],
+): Array<Record<string, unknown>> {
+  return readyPreviewAcceptanceMaterials(batch)
+    .filter((material) => requirementIds.includes(material.requirementId))
+    .flatMap((material) => {
+      const asset = previewAssets.find((candidate) => candidate.id === material.assetId);
+      if (!asset) return [];
+      return [{
+        requirementId: material.requirementId,
+        assetId: material.assetId,
+        sha256: asset.sha256,
+        groupKey: material.groupKey,
+        kind: material.kind,
+      }];
+    });
+}
+
+function previewAcceptanceDocumentForSpec(
+  batch: PreviewAcceptanceBatch,
+  spec: PreviewAcceptanceOutputSpec,
+): PreviewBusinessDocument | undefined {
+  return previewWorkspace.documents.find((document) =>
+    document.kind === "acceptance"
+    && document.snapshot.acceptanceBatchId === batch.id
+    && document.snapshot.acceptanceOutputSpecId === spec.id
+  );
+}
+
+function refreshPreviewAcceptanceBatchStatus(batch: PreviewAcceptanceBatch): void {
+  const documents = batch.outputSpecs
+    .map((spec) => previewAcceptanceDocumentForSpec(batch, spec))
+    .filter((document): document is PreviewBusinessDocument => Boolean(document));
+  if (documents.length !== batch.outputSpecs.length) {
+    batch.status = "collecting";
+    return;
+  }
+  if (documents.every((document) => document.status === "generated" || document.status === "effective")) {
+    batch.status = "generated";
+    return;
+  }
+  if (documents.every((document) => ["approved", "generated", "effective"].includes(document.status))) {
+    batch.status = "approved";
+    return;
+  }
+  batch.status = "documentsPrepared";
+}
+
+function previewAcceptanceSnapshot(
+  batch: PreviewAcceptanceBatch,
+  spec: PreviewAcceptanceOutputSpec,
+): Record<string, unknown> {
+  return {
+    workspaceRevision: previewWorkspace.revision,
+    acceptanceBatchId: batch.id,
+    acceptanceOutputSpecId: spec.id,
+    acceptanceBatchRevision: batch.revision,
+    materialBindings: previewAcceptanceMaterialBindings(batch, spec.requirementIds),
+    templateAssetId: spec.templateAssetId,
+    templateSourceSha256: spec.templateSourceSha256,
+    templateMappingVersion: spec.templateMappingVersion,
+    contractSettlement: spec.contractSettlement,
+    serviceSettlementItems: spec.serviceSettlementItems,
+    paymentApplication: spec.paymentApplication,
+    videoCompletionAcceptance: spec.videoCompletionAcceptance,
+    productionResultConfirmation: spec.productionResultConfirmation,
+    customerId: previewWorkspace.customerId,
+    customer: previewWorkspace.customer,
+    profile: previewWorkspace.profile,
+    payment: null,
+  };
+}
+
+function completePreviewAcceptanceCommand(commandType: string, now: number): unknown {
+  previewWorkspace.revision += 1;
+  previewWorkspace.updatedAt = now;
+  return {
+    receipt: receipt(commandType, previewWorkspace.revision),
+    businessWorkspace: workspace,
+    replayed: false,
+  };
+}
+
+function executePreviewAcceptanceCommand(command: PreviewBusinessCommand): unknown | null {
+  const now = Date.now();
+
+  if (command.commandType === "businessWorkspace.createAcceptanceBatch") {
+    const payload = command.payload as {
+      workspaceId: string;
+      label: string;
+      requirements: Array<Omit<PreviewAcceptanceRequirement, "id"> & { id: string | null }>;
+      outputSpecs: Array<Omit<PreviewAcceptanceOutputSpec, "id"> & { id: string | null }>;
+    };
+    if (payload.workspaceId !== previewWorkspace.id) {
+      previewAcceptanceError("BUSINESS_WORKSPACE_NOT_FOUND", "business workspace does not exist in preview");
+    }
+    const batch: PreviewAcceptanceBatch = {
+      id: previewAcceptanceId("acceptance-batch"),
+      workspaceId: payload.workspaceId,
+      label: payload.label,
+      requirements: payload.requirements.map((requirement) => ({
+        ...requirement,
+        id: requirement.id || previewAcceptanceId("acceptance-requirement"),
+      })),
+      outputSpecs: payload.outputSpecs.map((spec) => ({
+        ...spec,
+        id: spec.id || previewAcceptanceId("acceptance-output"),
+      })),
+      materials: [],
+      readiness: { isReady: false, blockers: [] },
+      documentIds: [],
+      status: "collecting",
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    refreshPreviewAcceptanceReadiness(batch);
+    previewWorkspace.acceptanceBatches.push(batch);
+    return completePreviewAcceptanceCommand(command.commandType, now);
+  }
+
+  if (command.commandType === "businessWorkspace.upsertAcceptanceMaterial") {
+    const payload = command.payload as {
+      workspaceId: string;
+      batchId: string;
+      material: Omit<PreviewAcceptanceMaterial, "id" | "batchId" | "revision" | "createdAt" | "updatedAt"> & {
+        id: string | null;
+      };
+    };
+    if (payload.workspaceId !== previewWorkspace.id) {
+      previewAcceptanceError("BUSINESS_WORKSPACE_NOT_FOUND", "business workspace does not exist in preview");
+    }
+    const batch = requirePreviewAcceptanceBatch(payload.batchId);
+    if (batch.workspaceId !== payload.workspaceId) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND", "acceptance batch does not exist in this workspace");
+    }
+    const requirement = batch.requirements.find((candidate) => candidate.id === payload.material.requirementId);
+    if (!requirement) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_REQUIREMENT_NOT_FOUND", "acceptance requirement does not exist in this batch");
+    }
+    if (requirement.kind !== payload.material.kind) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_MATERIAL_KIND_MISMATCH", "acceptance material kind must match its requirement");
+    }
+    const asset = previewAssets.find((candidate) => candidate.id === payload.material.assetId);
+    if (!asset) {
+      previewAcceptanceError("ASSET_NOT_FOUND", "acceptance asset is missing");
+    }
+    if (asset.status !== "ready") {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_ASSET_NOT_READY", "acceptance material asset must be ready");
+    }
+    if (asset.projectId !== previewWorkspace.projectId) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_ASSET_PROJECT_MISMATCH", "acceptance material asset belongs to a different project");
+    }
+    if (!previewAcceptanceAssetMatchesRequirement(asset, requirement.kind)) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_ASSET_KIND_MISMATCH", "acceptance asset kind is incompatible with its requirement");
+    }
+    const existing = payload.material.id
+      ? batch.materials.find((material) => material.id === payload.material.id)
+      : undefined;
+    if (existing) {
+      Object.assign(existing, payload.material, {
+        id: existing.id,
+        batchId: batch.id,
+        revision: existing.revision + 1,
+        updatedAt: now,
+      });
+    } else {
+      batch.materials.push({
+        ...payload.material,
+        id: payload.material.id || previewAcceptanceId("acceptance-material"),
+        batchId: batch.id,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    batch.revision += 1;
+    batch.updatedAt = now;
+    refreshPreviewAcceptanceReadiness(batch);
+    refreshPreviewAcceptanceBatchStatus(batch);
+    return completePreviewAcceptanceCommand(command.commandType, now);
+  }
+
+  if (command.commandType === "businessWorkspace.prepareAcceptanceDocuments") {
+    const payload = command.payload as { workspaceId: string; batchId: string };
+    if (payload.workspaceId !== previewWorkspace.id) {
+      previewAcceptanceError("BUSINESS_WORKSPACE_NOT_FOUND", "business workspace does not exist in preview");
+    }
+    const batch = requirePreviewAcceptanceBatch(payload.batchId);
+    if (batch.outputSpecs.length < 5) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_OUTPUTS_INCOMPLETE", "preview acceptance batch requires five output specifications");
+    }
+    let sequenceNumber = Math.max(
+      0,
+      ...previewWorkspace.documents
+        .filter((document) => document.kind === "acceptance")
+        .map((document) => document.sequenceNumber),
+    );
+    const documentIds: string[] = [];
+    for (const spec of batch.outputSpecs.slice(0, 5)) {
+      let document = previewAcceptanceDocumentForSpec(batch, spec);
+      if (document) {
+        if (document.status === "draft" || document.status === "inReview") {
+          document.snapshot = previewAcceptanceSnapshot(batch, spec);
+          document.revision += 1;
+          document.updatedAt = now;
+        }
+      } else {
+        sequenceNumber += 1;
+        document = {
+          id: previewAcceptanceId("acceptance-document"),
+          kind: "acceptance",
+          sequenceNumber,
+          documentNumber: spec.documentNumber,
+          title: spec.title,
+          templateKey: spec.templateKey,
+          status: "draft",
+          snapshot: previewAcceptanceSnapshot(batch, spec),
+          outputAssetId: null,
+          outputFormat: null,
+          sourceAssetId: null,
+          reviewId: null,
+          reportAssetId: null,
+          evidence: null,
+          manualWaiver: null,
+          voidedAt: null,
+          voidedBy: null,
+          voidReason: "",
+          approvedAt: null,
+          approvedBy: null,
+          generatedAt: null,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        };
+        previewWorkspace.documents.push(document);
+      }
+      documentIds.push(document.id);
+    }
+    batch.documentIds = documentIds;
+    batch.updatedAt = now;
+    refreshPreviewAcceptanceBatchStatus(batch);
+    return completePreviewAcceptanceCommand(command.commandType, now);
+  }
+
+  if (command.commandType === "businessWorkspace.changeDocumentStatus") {
+    const payload = command.payload as {
+      workspaceId: string;
+      documentId: string;
+      status: string;
+      evidence: unknown | null;
+      manualWaiver: unknown | null;
+      reason: string;
+    };
+    const document = previewWorkspace.documents.find((candidate) => candidate.id === payload.documentId);
+    if (payload.workspaceId !== previewWorkspace.id || !document || document.kind !== "acceptance") return null;
+    const actorId = command.context?.actorId || "preview-user";
+    document.status = payload.status;
+    document.evidence = payload.evidence;
+    document.manualWaiver = payload.manualWaiver;
+    document.revision += 1;
+    document.updatedAt = now;
+    if (payload.status === "approved") {
+      document.approvedAt = now;
+      document.approvedBy = actorId;
+    } else if (payload.status === "draft" || payload.status === "inReview") {
+      document.approvedAt = null;
+      document.approvedBy = null;
+    }
+    if (payload.status === "voided") {
+      document.voidedAt = now;
+      document.voidedBy = actorId;
+      document.voidReason = payload.reason;
+    }
+    const batch = previewWorkspace.acceptanceBatches.find((candidate) => candidate.documentIds.includes(document.id));
+    if (batch) refreshPreviewAcceptanceBatchStatus(batch);
+    return completePreviewAcceptanceCommand(command.commandType, now);
+  }
+
+  if (command.commandType === "businessWorkspace.generateDocument") {
+    const payload = command.payload as { workspaceId: string; documentId: string; format: string };
+    const document = previewWorkspace.documents.find((candidate) => candidate.id === payload.documentId);
+    if (payload.workspaceId !== previewWorkspace.id || !document || document.kind !== "acceptance") return null;
+    const batch = previewWorkspace.acceptanceBatches.find((candidate) => candidate.documentIds.includes(document.id));
+    if (!batch) {
+      previewAcceptanceError("BUSINESS_ACCEPTANCE_BATCH_NOT_FOUND", "acceptance document is not linked to a batch");
+    }
+    const outputAssetId = previewAcceptanceId("acceptance-output-asset");
+    const extension = payload.format === "xlsx" ? "xlsx" : "docx";
+    previewAssets.push({
+      id: outputAssetId,
+      projectId: previewWorkspace.projectId,
+      originalName: `${document.documentNumber}-${document.title}.${extension}`,
+      kind: "document",
+      mimeType: extension === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      sizeBytes: extension === "xlsx" ? 48_000 : 32_000,
+      sha256: outputAssetId.replace(/[^a-f0-9]/gi, "").padEnd(64, "0").slice(0, 64),
+      status: "ready",
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+      previewAvailable: false,
+    });
+    document.status = "generated";
+    document.outputFormat = payload.format;
+    document.outputAssetId = outputAssetId;
+    document.generatedAt = now;
+    document.revision += 1;
+    document.updatedAt = now;
+    refreshPreviewAcceptanceBatchStatus(batch);
+    return completePreviewAcceptanceCommand(command.commandType, now);
+  }
+
+  return null;
+}
 
 const contractReview = {
   session: {
@@ -817,9 +1411,9 @@ const aiStatus = {
   providers: [
     {
       id: "provider-banshan",
-      name: "半山 AIGC",
+      name: "华邦互娱 AI",
       kind: "openAiCompatible",
-      baseUrl: "https://ai.banshan.example/v1",
+      baseUrl: "https://ai.huabang.example/v1",
       apiKeyConfigured: true,
       apiKeyHint: "••••1b18",
       models: ["gpt-5.6-sol", "gpt-5.6-sol-mini"],
@@ -841,13 +1435,13 @@ const aiStatus = {
 
 const desktopSettings = {
   storage: {
-    dataRoot: "D:\\BSAIGC\\data",
+    dataRoot: "bsaigc-storage://data-root",
     totalBytes: 96_215_113_002,
     cacheBytes: 1_204_113_000,
     locations: [
-      { target: "database", label: "业务数据库", path: "D:\\BSAIGC\\data\\ledger", sizeBytes: 88_211_002, exists: true, authoritative: true, clearable: false },
-      { target: "vault", label: "Local Vault", path: "D:\\BSAIGC\\data\\vault", sizeBytes: 94_002_113_000, exists: true, authoritative: true, clearable: false },
-      { target: "cache", label: "可再生缓存", path: "D:\\BSAIGC\\data\\cache", sizeBytes: 1_204_113_000, exists: true, authoritative: false, clearable: true },
+      { target: "ledger", label: "业务数据库", path: "bsaigc-storage://ledger", sizeBytes: 88_211_002, exists: true, authoritative: true, clearable: false },
+      { target: "vault", label: "Local Vault", path: "bsaigc-storage://vault", sizeBytes: 94_002_113_000, exists: true, authoritative: true, clearable: false },
+      { target: "cache", label: "可再生缓存", path: "bsaigc-storage://cache", sizeBytes: 1_204_113_000, exists: true, authoritative: false, clearable: true },
     ],
   },
   channelAdapters: [
@@ -859,8 +1453,8 @@ const desktopSettings = {
     configured: true,
     ready: true,
     state: "ready",
-    message: "备份队列空闲",
-    pendingItems: 0,
+    message: "1 项等待异步备份",
+    pendingItems: 1,
   },
   update: {
     currentVersion: "1.2.2",
@@ -1015,6 +1609,11 @@ async function handleInvoke(cmd: string, args?: Record<string, unknown>): Promis
     case "auth_logout":
       authState.currentUser = null;
       return authStatusPayload();
+    case "auth_remembered_credentials":
+      return null;
+    case "auth_remember_credentials":
+    case "auth_forget_credentials":
+      return null;
     case "auth_change_password":
     case "auth_refresh_registry":
       return authStatusPayload();
@@ -1177,8 +1776,13 @@ async function handleInvoke(cmd: string, args?: Record<string, unknown>): Promis
       return { receipt: receipt("aiCredentials.status"), status: aiStatus, connectionTest: null, replayed: false };
     case "execute_desktop_settings_command":
       return { receipt: receipt("settings.status"), snapshot: desktopSettings, cacheClear: null, replayed: false };
-    case "execute_business_workspace_command":
+    case "execute_business_workspace_command": {
+      const command = (args as { command?: PreviewBusinessCommand } | undefined)?.command;
+      await applyPreviewBusinessWorkspaceControls(command);
+      const acceptanceResponse = command ? executePreviewAcceptanceCommand(command) : null;
+      if (acceptanceResponse) return acceptanceResponse;
       return { receipt: receipt("businessWorkspace.demo"), businessWorkspace: workspace, replayed: false };
+    }
     case "select_asset_source":
       return null;
     case "open_asset":
@@ -1195,7 +1799,8 @@ let callbackId = 100;
   unregisterListener: () => undefined,
 };
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
-  invoke: (cmd: string, args?: Record<string, unknown>) => handleInvoke(cmd, args),
+  invoke: async (cmd: string, args?: Record<string, unknown>) =>
+    structuredClone(await handleInvoke(cmd, args)),
   transformCallback: () => ++callbackId,
   unregisterCallback: () => undefined,
   convertFileSrc: (path: string) => path,

@@ -6,6 +6,9 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 
 Push-Location $repoRoot
 try {
+    $env:CARGO_BUILD_JOBS = "1"
+    $env:CARGO_PROFILE_TEST_DEBUG = "0"
+    $env:CARGO_INCREMENTAL = "0"
     & cargo test --manifest-path "src-tauri/Cargo.toml" "protocol::export_bindings"
     if ($LASTEXITCODE -ne 0) {
         Write-Error "BSAIGC protocol generation failed with exit code $LASTEXITCODE."
@@ -30,6 +33,14 @@ try {
         "src/generated/bsaigc/CaseCommandResponse.ts",
         "src/generated/bsaigc/CaseDomainEvent.ts",
         "src/generated/bsaigc/CaseRecord.ts",
+        "src/generated/bsaigc/SharedCaseCommandEnvelope.ts",
+        "src/generated/bsaigc/SharedCaseCommandResponse.ts",
+        "src/generated/bsaigc/SharedCaseDomainEvent.ts",
+        "src/generated/bsaigc/SharedCaseEventType.ts",
+        "src/generated/bsaigc/SharedCaseGrant.ts",
+        "src/generated/bsaigc/SharedCasePermission.ts",
+        "src/generated/bsaigc/SharedCasePublicationRecord.ts",
+        "src/generated/bsaigc/SharedCasePublicationStatus.ts",
         "src/generated/bsaigc/ExecutionBriefCommandEnvelope.ts",
         "src/generated/bsaigc/ExecutionBriefCommandResponse.ts",
         "src/generated/bsaigc/ExecutionBriefDomainEvent.ts",
@@ -42,6 +53,16 @@ try {
         "src/generated/bsaigc/BusinessDocumentKind.ts",
         "src/generated/bsaigc/BusinessDocumentRecord.ts",
         "src/generated/bsaigc/BusinessDocumentSnapshot.ts",
+        "src/generated/bsaigc/BusinessVideoCompletionAcceptanceAssetReference.ts",
+        "src/generated/bsaigc/BusinessVideoCompletionAcceptanceScreenshot.ts",
+        "src/generated/bsaigc/BusinessVideoCompletionAcceptanceVideo.ts",
+        "src/generated/bsaigc/BusinessVideoCompletionAcceptanceDeliveryGroup.ts",
+        "src/generated/bsaigc/BusinessVideoCompletionAcceptanceData.ts",
+        "src/generated/bsaigc/BusinessProductionResultConfirmationAssetReference.ts",
+        "src/generated/bsaigc/BusinessProductionResultConfirmationShot.ts",
+        "src/generated/bsaigc/BusinessProductionResultConfirmationStoryboard.ts",
+        "src/generated/bsaigc/BusinessProductionResultConfirmationDeliveryItem.ts",
+        "src/generated/bsaigc/BusinessProductionResultConfirmationData.ts",
         "src/generated/bsaigc/BusinessDocumentStatus.ts",
         "src/generated/bsaigc/BusinessLineItem.ts",
         "src/generated/bsaigc/BusinessLineItemInput.ts",
@@ -80,6 +101,23 @@ try {
         "src/generated/bsaigc/AssignBusinessCustomerPayload.ts",
         "src/generated/bsaigc/BusinessMilestoneInput.ts",
         "src/generated/bsaigc/UpsertBusinessMilestonePayload.ts",
+        "src/generated/bsaigc/BusinessAcceptanceMaterialKind.ts",
+        "src/generated/bsaigc/BusinessContractSettlementData.ts",
+        "src/generated/bsaigc/BusinessServiceSettlementItemData.ts",
+        "src/generated/bsaigc/BusinessAcceptanceBatchStatus.ts",
+        "src/generated/bsaigc/BusinessAcceptanceRequirementRecord.ts",
+        "src/generated/bsaigc/BusinessAcceptanceOutputSpecRecord.ts",
+        "src/generated/bsaigc/BusinessAcceptanceMaterialBinding.ts",
+        "src/generated/bsaigc/BusinessAcceptanceMaterialRecord.ts",
+        "src/generated/bsaigc/BusinessAcceptanceBlocker.ts",
+        "src/generated/bsaigc/BusinessAcceptanceReadiness.ts",
+        "src/generated/bsaigc/BusinessAcceptanceBatchRecord.ts",
+        "src/generated/bsaigc/BusinessAcceptanceRequirementInput.ts",
+        "src/generated/bsaigc/BusinessAcceptanceOutputSpecInput.ts",
+        "src/generated/bsaigc/BusinessAcceptanceMaterialInput.ts",
+        "src/generated/bsaigc/CreateBusinessAcceptanceBatchPayload.ts",
+        "src/generated/bsaigc/PrepareBusinessAcceptanceDocumentsPayload.ts",
+        "src/generated/bsaigc/UpsertBusinessAcceptanceMaterialPayload.ts",
         "src/generated/bsaigc/RegisterBusinessDeliverableVersionPayload.ts",
         "src/generated/bsaigc/RecordBusinessDeliverySentPayload.ts",
         "src/generated/bsaigc/RecordBusinessDeliverySignoffPayload.ts",

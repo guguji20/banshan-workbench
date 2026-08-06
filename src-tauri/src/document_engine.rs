@@ -1,6 +1,6 @@
 use crate::protocol::{
     BusinessDocumentFormat, BusinessDocumentKind, BusinessDocumentRecord, BusinessLineItem,
-    HostError,
+    BusinessProfile, HostError,
 };
 use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
@@ -17,6 +17,107 @@ pub(crate) const QUOTE_TEMPLATE_KEY: &str = "builtin.quote.standard.v1";
 pub(crate) const CONTRACT_TEMPLATE_KEY: &str = "builtin.contract.service.v1";
 pub(crate) const PAYMENT_REQUEST_TEMPLATE_KEY: &str = "builtin.payment-request.standard.v1";
 pub(crate) const ACCEPTANCE_TEMPLATE_KEY: &str = "builtin.acceptance.standard.v1";
+pub(crate) const BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY: &str =
+    "project.baietan.acceptance.video-completion-acceptance.v1";
+pub(crate) const BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY: &str =
+    "project.baietan.acceptance.production-result-confirmation.v1";
+pub(crate) const BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY: &str =
+    "project.baietan.acceptance.service-settlement-list.v1";
+pub(crate) const BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY: &str =
+    "project.baietan.acceptance.contract-settlement.v1";
+pub(crate) const BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY: &str =
+    "project.baietan.acceptance.payment-application-settlement-calculation.v1";
+const BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_SHA256: &str =
+    "CF9E21CEC8C5458F709410A17350B58D066EA98F3E6F15194598EFCFAA38B5FB";
+const BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_SHA256: &str =
+    "7F25AB4C3F1F6F92208F44CD7360717486051A351EE0202DAFCB621DA275C7BF";
+const BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_MAPPING_VERSION: &str =
+    "baietan.video-completion-acceptance.v1";
+const BAIETAN_PRODUCTION_RESULT_CONFIRMATION_MAPPING_VERSION: &str =
+    "baietan.production-result-confirmation.v1";
+const BAIETAN_SERVICE_SETTLEMENT_LIST_MAPPING_VERSION: &str = "baietan.service-settlement-list.v1";
+const BAIETAN_CONTRACT_SETTLEMENT_MAPPING_VERSION: &str = "baietan.contract-settlement.v1";
+const BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_MAPPING_VERSION: &str =
+    "baietan.payment-application-settlement-calculation.v1";
+
+struct TemplateRegistration {
+    kind: BusinessDocumentKind,
+    allowed_format: Option<BusinessDocumentFormat>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DocumentGenerationResources<'a> {
+    pub(crate) video_completion_acceptance: Option<
+        &'a crate::business_v1::video_completion_acceptance_template::VideoCompletionAcceptanceTemplateData,
+    >,
+    pub(crate) production_result_confirmation: Option<
+        &'a crate::business_v1::production_result_confirmation_template::ProductionResultConfirmationTemplateData,
+    >,
+}
+
+pub(crate) fn template_requires_source_asset(template_key: &str) -> bool {
+    matches!(
+        template_key,
+        BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY
+            | BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY
+            | BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY
+            | BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY
+            | BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY
+    )
+}
+
+pub(crate) fn expected_template_source_sha256(template_key: &str) -> Option<&'static str> {
+    match template_key {
+        BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY => {
+            Some(BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_SHA256)
+        }
+        BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY => {
+            Some(BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_SHA256)
+        }
+        BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+            Some(crate::business_v1::acceptance_docx_template::SERVICE_SETTLEMENT_TEMPLATE_SHA256)
+        }
+        BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+            Some(crate::business_v1::acceptance_xlsx_template::CONTRACT_SETTLEMENT_TEMPLATE_SHA256)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn expected_template_mapping_version(template_key: &str) -> Option<&'static str> {
+    match template_key {
+        BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY => {
+            Some(BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_MAPPING_VERSION)
+        }
+        BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY => {
+            Some(BAIETAN_PRODUCTION_RESULT_CONFIRMATION_MAPPING_VERSION)
+        }
+        BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => {
+            Some(BAIETAN_SERVICE_SETTLEMENT_LIST_MAPPING_VERSION)
+        }
+        BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => {
+            Some(BAIETAN_CONTRACT_SETTLEMENT_MAPPING_VERSION)
+        }
+        BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY => {
+            Some(BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_MAPPING_VERSION)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn preflight_normalized_template(
+    template_key: &str,
+    source: &[u8],
+    expected_sha256: &str,
+) -> Result<(), HostError> {
+    if template_key == BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY {
+        return crate::business_v1::payment_application_template::validate_payment_application_template_source_from_bytes(
+            source,
+            expected_sha256,
+        );
+    }
+    Ok(())
+}
 
 /// A generated OOXML package whose native path is backend-only. Dropping the
 /// value removes the complete staging directory, including partial output.
@@ -32,6 +133,51 @@ impl StagedDocument {
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
+}
+
+pub(crate) fn stage_normalized_template(
+    vault_root: &Path,
+    template_version_id: &str,
+) -> Result<StagedDocument, HostError> {
+    let template_version_id = Uuid::parse_str(template_version_id)
+        .map(|value| value.to_string())
+        .map_err(|_| HostError::validation("templateVersionId must be a UUID"))?;
+    fs::create_dir_all(vault_root).map_err(document_io_error("create Vault root"))?;
+    let vault_root =
+        fs::canonicalize(vault_root).map_err(document_io_error("resolve Vault root"))?;
+    if !vault_root.is_dir() {
+        return Err(HostError::new(
+            "VAULT_INVALID",
+            "Vault root is not a directory",
+            false,
+        ));
+    }
+
+    let staging_root = prepare_staging_root(&vault_root)?;
+    let reconcile_lock = open_lock_file(&staging_root.join(RECONCILE_LOCK_FILE))?;
+    reconcile_lock
+        .lock_exclusive()
+        .map_err(document_io_error("lock template staging creation"))?;
+    let staging_directory = staging_root.join(Uuid::new_v4().to_string());
+    fs::create_dir(&staging_directory).map_err(document_io_error(
+        "create normalized template staging directory",
+    ))?;
+    let staging_directory = validate_staging_subdirectory(&staging_root, &staging_directory)?;
+    let lease = open_lock_file(&staging_directory.join(GENERATION_LEASE_FILE))?;
+    lease
+        .lock_exclusive()
+        .map_err(document_io_error("lock active template normalization"))?;
+    FileExt::unlock(&reconcile_lock)
+        .map_err(document_io_error("unlock template staging creation"))?;
+
+    Ok(StagedDocument {
+        path: staging_directory.join(format!(
+            "bsaigc-normalized-template-{template_version_id}.docx"
+        )),
+        staging_root,
+        staging_directory,
+        lease: Some(lease),
+    })
 }
 
 impl Drop for StagedDocument {
@@ -162,13 +308,82 @@ pub(crate) fn generation_is_active(
     Ok(active)
 }
 
-pub fn generate_document(
+#[cfg(test)]
+pub(crate) fn generate_document(
     vault_root: &Path,
     document: &BusinessDocumentRecord,
     format: &BusinessDocumentFormat,
 ) -> Result<StagedDocument, HostError> {
-    validate_template(&document.kind, &document.template_key)?;
-    validate_format(&document.kind, format)?;
+    generate_document_with_template(vault_root, document, format, None)
+}
+
+#[allow(dead_code)]
+pub(crate) fn generate_document_with_template(
+    vault_root: &Path,
+    document: &BusinessDocumentRecord,
+    format: &BusinessDocumentFormat,
+    template_source: Option<&[u8]>,
+) -> Result<StagedDocument, HostError> {
+    generate_document_with_template_and_resources(
+        vault_root,
+        document,
+        format,
+        template_source,
+        DocumentGenerationResources::default(),
+    )
+}
+
+pub(crate) fn generate_document_with_template_and_resources(
+    vault_root: &Path,
+    document: &BusinessDocumentRecord,
+    format: &BusinessDocumentFormat,
+    template_source: Option<&[u8]>,
+    resources: DocumentGenerationResources<'_>,
+) -> Result<StagedDocument, HostError> {
+    validate_template_for_format(&document.kind, &document.template_key, format)?;
+    if template_requires_source_asset(&document.template_key) && template_source.is_none() {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_RENDERING_NOT_READY",
+            "registered customer templates require the dedicated template renderer",
+            false,
+        ));
+    }
+    if document.template_key == BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY
+        && resources.video_completion_acceptance.is_none()
+    {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_RENDERING_NOT_READY",
+            "video completion acceptance rendering resources are required",
+            false,
+        ));
+    }
+    if document.template_key == BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY
+        && resources.production_result_confirmation.is_none()
+    {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_RENDERING_NOT_READY",
+            "production result confirmation rendering resources are required",
+            false,
+        ));
+    }
+    if document.template_key != BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY
+        && resources.video_completion_acceptance.is_some()
+    {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_DATA_UNEXPECTED",
+            "video completion acceptance resources are only valid for their registered template",
+            false,
+        ));
+    }
+    if document.template_key != BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY
+        && resources.production_result_confirmation.is_some()
+    {
+        return Err(HostError::new(
+            "BUSINESS_TEMPLATE_DATA_UNEXPECTED",
+            "production result confirmation resources are only valid for their registered template",
+            false,
+        ));
+    }
     fs::create_dir_all(vault_root).map_err(document_io_error("create Vault root"))?;
     let vault_root =
         fs::canonicalize(vault_root).map_err(document_io_error("resolve Vault root"))?;
@@ -213,23 +428,348 @@ pub fn generate_document(
         staging_directory,
         lease: Some(lease),
     };
-    let result = match format {
-        BusinessDocumentFormat::Docx => write_docx(staged.path(), document),
-        BusinessDocumentFormat::Xlsx => write_xlsx(staged.path(), document),
+    let result = match document.template_key.as_str() {
+        BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY => {
+            render_video_completion_acceptance_template(
+                template_source.expect("source template checked above"),
+                staged.path(),
+                document,
+                resources,
+            )
+        }
+        BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY => {
+            render_production_result_confirmation_template(
+                template_source.expect("source template checked above"),
+                staged.path(),
+                document,
+                resources,
+            )
+        }
+        BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => render_contract_settlement_template(
+            template_source.expect("source template checked above"),
+            staged.path(),
+            document,
+        ),
+        BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY => render_service_settlement_template(
+            template_source.expect("source template checked above"),
+            staged.path(),
+            document,
+        ),
+        BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY => {
+            render_payment_application_template(
+                template_source.expect("source template checked above"),
+                staged.path(),
+                document,
+            )
+        }
+        template_key if template_requires_source_asset(template_key) => Err(HostError::new(
+            "BUSINESS_TEMPLATE_RENDERING_NOT_READY",
+            "registered customer template renderer is not implemented",
+            false,
+        )),
+        _ => match format {
+            BusinessDocumentFormat::Docx => write_docx(staged.path(), document),
+            BusinessDocumentFormat::Xlsx => write_xlsx(staged.path(), document),
+        },
     };
     result?;
     Ok(staged)
+}
+
+fn render_video_completion_acceptance_template(
+    source: &[u8],
+    destination: &Path,
+    document: &BusinessDocumentRecord,
+    resources: DocumentGenerationResources<'_>,
+) -> Result<(), HostError> {
+    let data = resources.video_completion_acceptance.ok_or_else(|| {
+        HostError::new(
+            "BUSINESS_TEMPLATE_RENDERING_NOT_READY",
+            "video completion acceptance rendering resources are required",
+            false,
+        )
+    })?;
+    let expected_sha256 = document
+        .snapshot
+        .template_source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "video completion acceptance document snapshot is missing template SHA-256",
+                false,
+            )
+        })?;
+    crate::business_v1::video_completion_acceptance_template::render_video_completion_acceptance_template_from_bytes(
+        source,
+        expected_sha256,
+        destination,
+        data,
+    )
+}
+
+fn render_production_result_confirmation_template(
+    source: &[u8],
+    destination: &Path,
+    document: &BusinessDocumentRecord,
+    resources: DocumentGenerationResources<'_>,
+) -> Result<(), HostError> {
+    let data = resources.production_result_confirmation.ok_or_else(|| {
+        HostError::new(
+            "BUSINESS_TEMPLATE_RENDERING_NOT_READY",
+            "production result confirmation rendering resources are required",
+            false,
+        )
+    })?;
+    let expected_sha256 = document
+        .snapshot
+        .template_source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "production result confirmation document snapshot is missing template SHA-256",
+                false,
+            )
+        })?;
+    crate::business_v1::production_result_confirmation_template::render_production_result_confirmation_template_from_bytes(
+        source,
+        expected_sha256,
+        destination,
+        data,
+    )
+}
+
+fn render_contract_settlement_template(
+    source: &[u8],
+    destination: &Path,
+    document: &BusinessDocumentRecord,
+) -> Result<(), HostError> {
+    let settlement = document
+        .snapshot
+        .contract_settlement
+        .as_ref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_CONTRACT_SETTLEMENT_DATA_REQUIRED",
+                "contract settlement document snapshot is missing frozen settlement data",
+                false,
+            )
+        })?;
+    let expected_sha256 = document
+        .snapshot
+        .template_source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "contract settlement document snapshot is missing template SHA-256",
+                false,
+            )
+        })?;
+    let data = crate::business_v1::acceptance_xlsx_template::ContractSettlementTemplateData {
+        project_title: document.snapshot.profile.project_title.clone(),
+        contract_title: settlement.contract_title.clone(),
+        contract_number: settlement.contract_number.clone(),
+        customer_legal_name: document.snapshot.profile.customer_legal_name.clone(),
+        supplier_legal_name: document.snapshot.profile.supplier_legal_name.clone(),
+        original_contract_amount_cents: settlement.original_contract_amount_cents,
+        contract_adjustment_cents: settlement.contract_adjustment_cents,
+        retention_rate_bps: settlement.retention_rate_bps,
+        final_settlement_amount_cents: settlement.final_settlement_amount_cents,
+        final_settlement_amount_uppercase_cny:
+            crate::business_v1::acceptance_xlsx_template::uppercase_cny(
+                settlement.final_settlement_amount_cents,
+            )?,
+    };
+    crate::business_v1::acceptance_xlsx_template::clone_contract_settlement_template_from_bytes(
+        source,
+        expected_sha256,
+        destination,
+        &data,
+    )
+}
+
+fn render_service_settlement_template(
+    source: &[u8],
+    destination: &Path,
+    document: &BusinessDocumentRecord,
+) -> Result<(), HostError> {
+    if document.snapshot.service_settlement_items.is_empty() {
+        return Err(HostError::new(
+            "BUSINESS_SERVICE_SETTLEMENT_DATA_REQUIRED",
+            "service settlement document snapshot is missing frozen service rows",
+            false,
+        ));
+    }
+    let expected_sha256 = document
+        .snapshot
+        .template_source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "service settlement document snapshot is missing template SHA-256",
+                false,
+            )
+        })?;
+    let data = crate::business_v1::acceptance_docx_template::ServiceSettlementTemplateData {
+        items: document
+            .snapshot
+            .service_settlement_items
+            .iter()
+            .map(
+                |item| crate::business_v1::acceptance_docx_template::ServiceSettlementItem {
+                    service_name: item.service_name.clone(),
+                    period: item.period.clone(),
+                    description: item.description.clone(),
+                    provided_as_required: item.provided_as_required,
+                    evidence_label: item.evidence_label.clone(),
+                    remarks: item.remarks.clone(),
+                },
+            )
+            .collect(),
+    };
+    crate::business_v1::acceptance_docx_template::clone_service_settlement_template_from_bytes(
+        source,
+        expected_sha256,
+        destination,
+        &data,
+    )
+}
+
+fn render_payment_application_template(
+    source: &[u8],
+    destination: &Path,
+    document: &BusinessDocumentRecord,
+) -> Result<(), HostError> {
+    let frozen = document
+        .snapshot
+        .payment_application
+        .as_ref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_PAYMENT_APPLICATION_DATA_REQUIRED",
+                "payment application document snapshot is missing frozen data",
+                false,
+            )
+        })?;
+    let expected_sha256 = document
+        .snapshot
+        .template_source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            HostError::new(
+                "BUSINESS_TEMPLATE_SOURCE_REQUIRED",
+                "payment application document snapshot is missing template SHA-256",
+                false,
+            )
+        })?;
+    let profile = &document.snapshot.profile;
+    let data = crate::business_v1::payment_application_template::PaymentApplicationTemplateData {
+        customer_legal_name: profile.customer_legal_name.clone(),
+        project_title: profile.project_title.clone(),
+        contract_title: frozen.contract_title.clone(),
+        contract_number: frozen.contract_number.clone(),
+        supplier_legal_name: profile.supplier_legal_name.clone(),
+        work_summary: frozen.work_summary.clone(),
+        payment_period_start: frozen.payment_period_start.clone(),
+        payment_period_end: frozen.payment_period_end.clone(),
+        settlement_period: frozen.settlement_period.clone(),
+        payment_sequence: frozen.payment_sequence,
+        invoice_amount_cents: frozen.invoice_amount_cents,
+        cumulative_recognized_amount_cents: frozen.cumulative_recognized_amount_cents,
+        payable_amount_cents: frozen.remaining_payable_cents,
+        withheld_amount_cents: frozen.withheld_amount_cents,
+        cumulative_paid_cents: frozen.cumulative_paid_cents,
+        application_date: frozen.application_date.clone(),
+        bank_account: crate::business_v1::payment_application_template::PaymentBankAccount {
+            recipient_name: profile.supplier_legal_name.clone(),
+            bank_name: profile.supplier_bank_name.clone(),
+            account_number: profile.supplier_bank_account.clone(),
+            routing_number: frozen.supplier_bank_routing_number.clone(),
+        },
+        settlement_items: frozen
+            .settlement_items
+            .iter()
+            .map(
+                |item| crate::business_v1::payment_application_template::PaymentSettlementItem {
+                    name: item.name.clone(),
+                    unit: item.unit.clone(),
+                    contract_unit_price_cents: item.contract_unit_price_cents,
+                    original_quantity_millis: item.original_quantity_millis,
+                    settlement_quantity_millis: item.settlement_quantity_millis,
+                    remarks: item.remarks.clone(),
+                },
+            )
+            .collect(),
+    };
+    if data.settlement_total_cents()? != frozen.settlement_total_cents
+        || data.remaining_payable_cents()? != frozen.remaining_payable_cents
+    {
+        return Err(HostError::new(
+            "BUSINESS_PAYMENT_REMAINING_PAYABLE_MISMATCH",
+            "renderer input does not match the frozen payment totals",
+            false,
+        ));
+    }
+    crate::business_v1::payment_application_template::render_payment_application_template_from_bytes(
+        source,
+        expected_sha256,
+        destination,
+        &data,
+    )
 }
 
 pub(crate) fn validate_template(
     kind: &BusinessDocumentKind,
     template_key: &str,
 ) -> Result<(), HostError> {
-    let registered_kind = match template_key {
-        QUOTE_TEMPLATE_KEY => BusinessDocumentKind::Quote,
-        CONTRACT_TEMPLATE_KEY => BusinessDocumentKind::Contract,
-        PAYMENT_REQUEST_TEMPLATE_KEY => BusinessDocumentKind::PaymentRequest,
-        ACCEPTANCE_TEMPLATE_KEY => BusinessDocumentKind::Acceptance,
+    validate_registered_template(kind, template_key, None)
+}
+
+pub(crate) fn validate_template_for_format(
+    kind: &BusinessDocumentKind,
+    template_key: &str,
+    format: &BusinessDocumentFormat,
+) -> Result<(), HostError> {
+    validate_format(kind, format)?;
+    validate_registered_template(kind, template_key, Some(format))
+}
+
+fn validate_registered_template(
+    kind: &BusinessDocumentKind,
+    template_key: &str,
+    format: Option<&BusinessDocumentFormat>,
+) -> Result<(), HostError> {
+    let registration = match template_key {
+        QUOTE_TEMPLATE_KEY => TemplateRegistration {
+            kind: BusinessDocumentKind::Quote,
+            allowed_format: Some(BusinessDocumentFormat::Xlsx),
+        },
+        CONTRACT_TEMPLATE_KEY => TemplateRegistration {
+            kind: BusinessDocumentKind::Contract,
+            allowed_format: Some(BusinessDocumentFormat::Docx),
+        },
+        PAYMENT_REQUEST_TEMPLATE_KEY => TemplateRegistration {
+            kind: BusinessDocumentKind::PaymentRequest,
+            allowed_format: Some(BusinessDocumentFormat::Docx),
+        },
+        ACCEPTANCE_TEMPLATE_KEY => TemplateRegistration {
+            kind: BusinessDocumentKind::Acceptance,
+            allowed_format: None,
+        },
+        BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY
+        | BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY
+        | BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY
+        | BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY => TemplateRegistration {
+            kind: BusinessDocumentKind::Acceptance,
+            allowed_format: Some(BusinessDocumentFormat::Docx),
+        },
+        BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY => TemplateRegistration {
+            kind: BusinessDocumentKind::Acceptance,
+            allowed_format: Some(BusinessDocumentFormat::Xlsx),
+        },
         _ => {
             return Err(HostError::new(
                 "BUSINESS_TEMPLATE_UNKNOWN",
@@ -238,15 +778,23 @@ pub(crate) fn validate_template(
             ));
         }
     };
-    if &registered_kind == kind {
-        Ok(())
-    } else {
-        Err(HostError::new(
+    if &registration.kind != kind {
+        return Err(HostError::new(
             "BUSINESS_TEMPLATE_KIND_MISMATCH",
             "business document template is registered for a different document kind",
             false,
-        ))
+        ));
     }
+    if let (Some(actual), Some(allowed)) = (format, registration.allowed_format.as_ref()) {
+        if actual != allowed {
+            return Err(HostError::new(
+                "BUSINESS_TEMPLATE_FORMAT_MISMATCH",
+                "business document template does not allow the requested output format",
+                false,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn open_lock_file(path: &Path) -> Result<File, HostError> {
@@ -405,18 +953,17 @@ fn validate_format(
         (kind, format),
         (BusinessDocumentKind::Quote, BusinessDocumentFormat::Xlsx)
             | (
-                BusinessDocumentKind::Contract
-                    | BusinessDocumentKind::PaymentRequest
-                    | BusinessDocumentKind::Acceptance,
+                BusinessDocumentKind::Contract | BusinessDocumentKind::PaymentRequest,
                 BusinessDocumentFormat::Docx
             )
+            | (BusinessDocumentKind::Acceptance, _)
     );
     if valid {
         Ok(())
     } else {
         Err(HostError::new(
             "BUSINESS_DOCUMENT_FORMAT_INVALID",
-            "quote documents require XLSX; all other business documents require DOCX",
+            "quote documents require XLSX; contract and payment request documents require DOCX",
             false,
         ))
     }
@@ -479,7 +1026,7 @@ fn write_entry(archive: &mut ZipWriter<File>, name: &str, contents: &str) -> Res
 fn docx_core(document: &BusinessDocumentRecord) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>{}</dc:title><dc:creator>BSAIGC Desktop</dc:creator><cp:lastModifiedBy>BSAIGC Desktop</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">2026-01-01T00:00:00Z</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">2026-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>"#,
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>{}</dc:title><dc:creator>华邦互娱商务系统</dc:creator><cp:lastModifiedBy>华邦互娱商务系统</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">2026-01-01T00:00:00Z</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">2026-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>"#,
         xml(&document.title)
     )
 }
@@ -585,7 +1132,7 @@ fn docx_document(document: &BusinessDocumentRecord) -> Result<String, HostError>
         body.push_str(&line_item_table(
             &profile.line_items,
             &profile.currency,
-            document_totals(&profile.line_items)?,
+            document_totals(profile)?,
         ));
     }
     if !profile.notes.is_empty() {
@@ -659,6 +1206,30 @@ fn line_item_table(items: &[BusinessLineItem], currency: &str, totals: Totals) -
         ]));
     }
     rows.push_str(&word_row(&[
+        "Original Total",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        &format!("{} {}", currency, format_cents(totals.original_total_cents)),
+    ]));
+    rows.push_str(&word_row(&[
+        "Project Discount",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        &format!(
+            "{} {}",
+            currency,
+            format_cents(totals.project_discount_cents)
+        ),
+    ]));
+    rows.push_str(&word_row(&[
         "Subtotal",
         "",
         "",
@@ -718,7 +1289,7 @@ fn word_row(values: &[&str]) -> String {
 
 fn xlsx_sheet(document: &BusinessDocumentRecord) -> Result<String, HostError> {
     let profile = &document.snapshot.profile;
-    let totals = document_totals(&profile.line_items)?;
+    let totals = document_totals(profile)?;
     let mut rows = String::new();
     rows.push_str(&sheet_row(1, &[inline_cell("A1", &document.title, 2)]));
     rows.push_str(&sheet_row(
@@ -795,10 +1366,10 @@ fn xlsx_sheet(document: &BusinessDocumentRecord) -> Result<String, HostError> {
     rows.push_str(&sheet_row(
         total_row,
         &[
-            inline_cell(&format!("F{total_row}"), "Subtotal", 1),
+            inline_cell(&format!("F{total_row}"), "Original Total", 1),
             number_cell(
                 &format!("G{total_row}"),
-                &scaled_decimal(totals.subtotal_cents, 2),
+                &scaled_decimal(totals.original_total_cents, 2),
                 3,
             ),
         ],
@@ -806,10 +1377,10 @@ fn xlsx_sheet(document: &BusinessDocumentRecord) -> Result<String, HostError> {
     rows.push_str(&sheet_row(
         total_row + 1,
         &[
-            inline_cell(&format!("F{}", total_row + 1), "Tax", 1),
+            inline_cell(&format!("F{}", total_row + 1), "Project Discount", 1),
             number_cell(
                 &format!("G{}", total_row + 1),
-                &scaled_decimal(totals.tax_cents, 2),
+                &scaled_decimal(totals.project_discount_cents, 2),
                 3,
             ),
         ],
@@ -817,10 +1388,10 @@ fn xlsx_sheet(document: &BusinessDocumentRecord) -> Result<String, HostError> {
     rows.push_str(&sheet_row(
         total_row + 2,
         &[
-            inline_cell(&format!("F{}", total_row + 2), "Total", 1),
+            inline_cell(&format!("F{}", total_row + 2), "Subtotal", 1),
             number_cell(
                 &format!("G{}", total_row + 2),
-                &scaled_decimal(totals.total_cents, 2),
+                &scaled_decimal(totals.subtotal_cents, 2),
                 3,
             ),
         ],
@@ -828,15 +1399,37 @@ fn xlsx_sheet(document: &BusinessDocumentRecord) -> Result<String, HostError> {
     rows.push_str(&sheet_row(
         total_row + 3,
         &[
-            inline_cell(&format!("A{}", total_row + 3), "Total in words", 1),
+            inline_cell(&format!("F{}", total_row + 3), "Tax", 1),
+            number_cell(
+                &format!("G{}", total_row + 3),
+                &scaled_decimal(totals.tax_cents, 2),
+                3,
+            ),
+        ],
+    ));
+    rows.push_str(&sheet_row(
+        total_row + 4,
+        &[
+            inline_cell(&format!("F{}", total_row + 4), "Total", 1),
+            number_cell(
+                &format!("G{}", total_row + 4),
+                &scaled_decimal(totals.total_cents, 2),
+                3,
+            ),
+        ],
+    ));
+    rows.push_str(&sheet_row(
+        total_row + 5,
+        &[
+            inline_cell(&format!("A{}", total_row + 5), "Total in words", 1),
             inline_cell(
-                &format!("B{}", total_row + 3),
+                &format!("B{}", total_row + 5),
                 &total_in_words(&profile.currency, totals.total_cents),
                 0,
             ),
         ],
     ));
-    let notes_row = total_row + 5;
+    let notes_row = total_row + 7;
     rows.push_str(&sheet_row(
         notes_row,
         &[
@@ -873,20 +1466,38 @@ fn number_cell(reference: &str, value: &str, style: usize) -> String {
 
 #[derive(Clone, Copy)]
 struct Totals {
+    original_total_cents: i64,
+    project_discount_cents: i64,
     subtotal_cents: i64,
     tax_cents: i64,
     total_cents: i64,
 }
 
-fn document_totals(items: &[BusinessLineItem]) -> Result<Totals, HostError> {
-    let mut subtotal = 0_i128;
+fn document_totals(profile: &BusinessProfile) -> Result<Totals, HostError> {
+    if let Some(totals) = &profile.quotation_totals {
+        return Ok(Totals {
+            original_total_cents: totals.original_total_cents,
+            project_discount_cents: totals.project_discount_cents,
+            subtotal_cents: totals.tax_exclusive_total_cents,
+            tax_cents: totals.tax_cents,
+            total_cents: totals.final_total_cents,
+        });
+    }
+
+    let mut original_total = 0_i128;
     let mut tax = 0_i128;
-    for item in items {
-        subtotal += i128::from(item.amount_cents);
+    for item in &profile.line_items {
+        original_total += i128::from(item.amount_cents);
         tax += i128::from(line_tax_cents(item));
     }
-    let total = subtotal + tax;
-    if subtotal > i128::from(i64::MAX) || tax > i128::from(i64::MAX) || total > i128::from(i64::MAX)
+    let discount = i128::from(profile.project_discount_cents);
+    let total = original_total - discount;
+    let subtotal = original_total - tax;
+    if original_total > i128::from(i64::MAX)
+        || subtotal < 0
+        || tax > i128::from(i64::MAX)
+        || total < 0
+        || total > i128::from(i64::MAX)
     {
         return Err(HostError::new(
             "BUSINESS_DOCUMENT_AMOUNT_OVERFLOW",
@@ -895,6 +1506,8 @@ fn document_totals(items: &[BusinessLineItem]) -> Result<Totals, HostError> {
         ));
     }
     Ok(Totals {
+        original_total_cents: original_total as i64,
+        project_discount_cents: profile.project_discount_cents,
         subtotal_cents: subtotal as i64,
         tax_cents: tax as i64,
         total_cents: total as i64,
@@ -902,7 +1515,9 @@ fn document_totals(items: &[BusinessLineItem]) -> Result<Totals, HostError> {
 }
 
 fn line_tax_cents(item: &BusinessLineItem) -> i64 {
-    ((i128::from(item.amount_cents) * i128::from(item.tax_rate_bps) + 5_000) / 10_000) as i64
+    let denominator = 10_000_i128 + i128::from(item.tax_rate_bps);
+    ((i128::from(item.amount_cents) * i128::from(item.tax_rate_bps) + denominator / 2)
+        / denominator) as i64
 }
 
 fn scaled_decimal(value: i64, fractional_digits: u32) -> String {
@@ -1077,7 +1692,7 @@ const DOCX_CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standal
 const DOCX_ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#;
 const DOCX_APP: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>BSAIGC Desktop</Application><AppVersion>1.0</AppVersion></Properties>"#;
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>华邦互娱商务系统</Application><AppVersion>1.0</AppVersion></Properties>"#;
 const DOCX_STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style></w:styles>"#;
 
@@ -1086,7 +1701,7 @@ const XLSX_CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standal
 const XLSX_ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#;
 const XLSX_APP: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>BSAIGC Desktop</Application><AppVersion>1.0</AppVersion></Properties>"#;
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>华邦互娱商务系统</Application><AppVersion>1.0</AppVersion></Properties>"#;
 const XLSX_WORKBOOK: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Quote" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
 const XLSX_WORKBOOK_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1099,7 +1714,7 @@ mod tests {
     use super::*;
     use crate::protocol::{
         BusinessDocumentSnapshot, BusinessDocumentStatus, BusinessPaymentRecord,
-        BusinessPaymentStatus, BusinessProfile,
+        BusinessPaymentStatus, BusinessProfile, BusinessQuotationTotals, BusinessTaxMode,
     };
     use std::io::Read;
     use zip::ZipArchive;
@@ -1135,6 +1750,18 @@ mod tests {
             status: BusinessDocumentStatus::Approved,
             snapshot: BusinessDocumentSnapshot {
                 workspace_revision: 2,
+                acceptance_batch_id: None,
+                acceptance_output_spec_id: None,
+                acceptance_batch_revision: None,
+                material_bindings: Vec::new(),
+                template_asset_id: None,
+                template_source_sha256: None,
+                template_mapping_version: String::new(),
+                contract_settlement: None,
+                service_settlement_items: Vec::new(),
+                payment_application: None,
+                video_completion_acceptance: None,
+                production_result_confirmation: None,
                 customer_id: String::new(),
                 customer: Default::default(),
                 profile: BusinessProfile {
@@ -1154,6 +1781,15 @@ mod tests {
                     supplier_bank_name: "Test Bank".to_string(),
                     supplier_bank_account: "622200000001".to_string(),
                     currency: "CNY".to_string(),
+                    tax_mode: BusinessTaxMode::TaxExclusive,
+                    project_discount_cents: 0,
+                    quotation_totals: Some(BusinessQuotationTotals {
+                        original_total_cents: 15_900,
+                        project_discount_cents: 0,
+                        tax_exclusive_total_cents: 15_000,
+                        tax_cents: 900,
+                        final_total_cents: 15_900,
+                    }),
                     service_start_at: Some(1_700_000_000_000),
                     service_end_at: Some(1_800_000_000_000),
                     delivery_summary: "Final film and cutdowns".to_string(),
@@ -1167,7 +1803,7 @@ mod tests {
                         unit: "item".to_string(),
                         unit_price_cents: 10_000,
                         tax_rate_bps: 600,
-                        amount_cents: 15_000,
+                        amount_cents: 15_900,
                     }],
                     ..BusinessProfile::default()
                 },
@@ -1189,6 +1825,142 @@ mod tests {
             revision: 2,
             created_at: 1,
             updated_at: 1,
+        }
+    }
+
+    fn video_completion_acceptance_data(
+    ) -> crate::business_v1::video_completion_acceptance_template::VideoCompletionAcceptanceTemplateData
+    {
+        use crate::business_v1::video_completion_acceptance_template::{
+            VideoAssetReference, VideoBlock, VideoCompletionAcceptanceTemplateData,
+            VideoDeliveryGroup, VideoScreenshot,
+        };
+        use sha2::{Digest, Sha256};
+
+        let image_bytes = vec![
+            0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0,
+            1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 0, b'I', b'E', b'N', b'D',
+            174, 66, 96, 130,
+        ];
+        let image_sha256 = format!("{:X}", Sha256::digest(&image_bytes));
+        VideoCompletionAcceptanceTemplateData {
+            contract_title: "Test contract".to_string(),
+            project_title: "Test project".to_string(),
+            completion_date: "2026-07-29".to_string(),
+            delivery_groups: vec![VideoDeliveryGroup {
+                name: "Delivery group".to_string(),
+                service_description: "Completed video delivery".to_string(),
+                videos: vec![VideoBlock {
+                    title: "Main video".to_string(),
+                    video_type: "Final cut".to_string(),
+                    content: "Approved final video".to_string(),
+                    duration: "30s".to_string(),
+                    asset_reference: VideoAssetReference {
+                        asset_id: "asset-video-1".to_string(),
+                        file_name: "main.mp4".to_string(),
+                        sha256: "A".repeat(64),
+                        external_link: None,
+                    },
+                    screenshots: vec![VideoScreenshot {
+                        asset_id: "asset-shot-1".to_string(),
+                        sha256: image_sha256,
+                        caption: "Representative frame".to_string(),
+                        mime_type: "image/png".to_string(),
+                        image_bytes,
+                        width_px: 1,
+                        height_px: 1,
+                    }],
+                }],
+            }],
+            acceptance_conclusion: "Accepted".to_string(),
+            manually_confirmed: true,
+        }
+    }
+
+    fn production_result_confirmation_data(
+    ) -> crate::business_v1::production_result_confirmation_template::ProductionResultConfirmationTemplateData
+    {
+        use crate::business_v1::production_result_confirmation_template::{
+            ProductionResultConfirmationDeliveryItem, ProductionResultConfirmationImage,
+            ProductionResultConfirmationShot, ProductionResultConfirmationStoryboard,
+            ProductionResultConfirmationTemplateData,
+        };
+        use sha2::{Digest, Sha256};
+
+        let image_bytes = vec![
+            0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0,
+            1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 0, b'I', b'E', b'N', b'D',
+            174, 66, 96, 130,
+        ];
+        let image_sha256 = format!("{:X}", Sha256::digest(&image_bytes));
+        let mut next_shot = 1usize;
+        let storyboards = [14usize, 14, 13, 13]
+            .into_iter()
+            .enumerate()
+            .map(|(storyboard_index, shot_count)| {
+                let shots = (0..shot_count)
+                    .map(|_| {
+                        let shot_number = format!("SHOT-{next_shot:02}");
+                        next_shot += 1;
+                        ProductionResultConfirmationShot {
+                            shot_number: shot_number.clone(),
+                            scene: "Test scene".to_string(),
+                            description: "Approved storyboard frame".to_string(),
+                            on_screen_copy: "Test copy".to_string(),
+                            remarks: String::new(),
+                            source_highlighted: true,
+                            images: vec![ProductionResultConfirmationImage {
+                                asset_id: format!("asset-{shot_number}"),
+                                sha256: image_sha256.clone(),
+                                mime_type: "image/png".to_string(),
+                                width_px: 1,
+                                height_px: 1,
+                                alt_text: shot_number,
+                                image_bytes: image_bytes.clone(),
+                            }],
+                        }
+                    })
+                    .collect();
+                ProductionResultConfirmationStoryboard {
+                    title: format!("Storyboard {}", storyboard_index + 1),
+                    specification: "Approved specification".to_string(),
+                    production_format: "Video".to_string(),
+                    duration: "30s".to_string(),
+                    shots,
+                }
+            })
+            .collect();
+
+        ProductionResultConfirmationTemplateData {
+            attachment_label: "Attachment 1".to_string(),
+            document_title: "Production Result Confirmation".to_string(),
+            category: "Video production".to_string(),
+            project_name: "Test project".to_string(),
+            contract_title: "Test contract".to_string(),
+            payment_amount_cents: 100_000,
+            contract_deliverable_summary: "Approved production deliverables".to_string(),
+            supplier_legal_name: "Test supplier".to_string(),
+            procurement_period: "2026-07-01 to 2026-07-29".to_string(),
+            acceptance_description: "Production results accepted".to_string(),
+            penalty_or_additions: "None".to_string(),
+            delivery_items: vec![ProductionResultConfirmationDeliveryItem {
+                item_id: "delivery-item-1".to_string(),
+                name: "Final video".to_string(),
+                specification: "Approved master".to_string(),
+                required_quantity: "1".to_string(),
+                unit: "item".to_string(),
+                received_quantity: "1".to_string(),
+                acceptance_note: "Accepted".to_string(),
+                images: Vec::new(),
+            }],
+            execution_completed_date: "2026-07-28".to_string(),
+            acceptance_date: "2026-07-29".to_string(),
+            handler_signoff: "Handler".to_string(),
+            professional_lead_signoff: "Lead".to_string(),
+            other_department_signoff: String::new(),
+            supplier_handler_signoff: "Supplier".to_string(),
+            storyboards,
+            clean_highlights: Some(true),
         }
     }
 
@@ -1265,6 +2037,65 @@ mod tests {
         assert!(sheet.contains("CNY ONE HUNDRED FIFTY-NINE AND 00/100"));
         drop(staged);
         assert!(!staged_path.exists());
+    }
+
+    #[test]
+    fn acceptance_can_be_a_real_xlsx_package() {
+        let temporary = tempfile::tempdir().unwrap();
+        let staged = generate_document(
+            temporary.path(),
+            &document(BusinessDocumentKind::Acceptance),
+            &BusinessDocumentFormat::Xlsx,
+        )
+        .unwrap();
+        assert_archive(
+            &staged,
+            &[
+                "[Content_Types].xml",
+                "_rels/.rels",
+                "xl/workbook.xml",
+                "xl/_rels/workbook.xml.rels",
+                "xl/worksheets/sheet1.xml",
+                "xl/styles.xml",
+            ],
+            "xl/worksheets/sheet1.xml",
+        );
+    }
+
+    #[test]
+    fn baietan_tax_inclusive_quote_keeps_unit_price_and_applies_project_discount_once() {
+        let mut document = document(BusinessDocumentKind::Quote);
+        let profile = &mut document.snapshot.profile;
+        profile.tax_mode = BusinessTaxMode::TaxInclusive;
+        profile.project_discount_cents = 490_000;
+        profile.line_items = vec![BusinessLineItem {
+            id: Uuid::new_v4().to_string(),
+            name: "Video production".to_string(),
+            description: "Baietan delivery".to_string(),
+            quantity_millis: 4_000,
+            unit: "item".to_string(),
+            unit_price_cents: 2_120_000,
+            tax_rate_bps: 600,
+            amount_cents: 8_480_000,
+        }];
+        profile.quotation_totals = Some(BusinessQuotationTotals {
+            original_total_cents: 8_480_000,
+            project_discount_cents: 490_000,
+            tax_exclusive_total_cents: 7_537_736,
+            tax_cents: 452_264,
+            final_total_cents: 7_990_000,
+        });
+
+        let temporary = tempfile::tempdir().unwrap();
+        let staged =
+            generate_document(temporary.path(), &document, &BusinessDocumentFormat::Xlsx).unwrap();
+        let sheet = read_entry(&staged, "xl/worksheets/sheet1.xml");
+        assert!(sheet.contains(">21200.00</v>"));
+        assert!(sheet.contains(">84800.00</v>"));
+        assert!(sheet.contains(">4900.00</v>"));
+        assert!(sheet.contains(">79900.00</v>"));
+        assert!(!sheet.contains(">89888.00</v>"));
+        assert!(!sheet.contains(">95281.28</v>"));
     }
 
     #[test]
@@ -1345,6 +2176,241 @@ mod tests {
     }
 
     #[test]
+    fn baietan_acceptance_template_keys_are_registered_with_stable_names_and_formats() {
+        let registrations = [
+            (
+                BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY,
+                "project.baietan.acceptance.video-completion-acceptance.v1",
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY,
+                "project.baietan.acceptance.production-result-confirmation.v1",
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY,
+                "project.baietan.acceptance.service-settlement-list.v1",
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY,
+                "project.baietan.acceptance.contract-settlement.v1",
+                BusinessDocumentFormat::Xlsx,
+            ),
+            (
+                BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+                "project.baietan.acceptance.payment-application-settlement-calculation.v1",
+                BusinessDocumentFormat::Docx,
+            ),
+        ];
+
+        for (template_key, expected_key, format) in registrations {
+            assert_eq!(template_key, expected_key);
+            validate_template(&BusinessDocumentKind::Acceptance, template_key).unwrap();
+            validate_template_for_format(&BusinessDocumentKind::Acceptance, template_key, &format)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn baietan_acceptance_template_keys_reject_format_mismatches() {
+        let mismatches = [
+            (
+                BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY,
+                BusinessDocumentFormat::Xlsx,
+            ),
+            (
+                BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY,
+                BusinessDocumentFormat::Xlsx,
+            ),
+            (
+                BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY,
+                BusinessDocumentFormat::Xlsx,
+            ),
+            (
+                BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY,
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+                BusinessDocumentFormat::Xlsx,
+            ),
+        ];
+
+        for (template_key, format) in mismatches {
+            let temporary = tempfile::tempdir().unwrap();
+            let mut acceptance = document(BusinessDocumentKind::Acceptance);
+            acceptance.template_key = template_key.to_string();
+            let error = generate_document(temporary.path(), &acceptance, &format).unwrap_err();
+            assert_eq!(error.code, "BUSINESS_TEMPLATE_FORMAT_MISMATCH");
+        }
+    }
+
+    #[test]
+    fn baietan_acceptance_template_keys_never_fall_back_to_builtin_renderers() {
+        let registrations = [
+            (
+                BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY,
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY,
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_SERVICE_SETTLEMENT_LIST_TEMPLATE_KEY,
+                BusinessDocumentFormat::Docx,
+            ),
+            (
+                BAIETAN_CONTRACT_SETTLEMENT_TEMPLATE_KEY,
+                BusinessDocumentFormat::Xlsx,
+            ),
+            (
+                BAIETAN_PAYMENT_APPLICATION_SETTLEMENT_CALCULATION_TEMPLATE_KEY,
+                BusinessDocumentFormat::Docx,
+            ),
+        ];
+
+        for (template_key, format) in registrations {
+            let temporary = tempfile::tempdir().unwrap();
+            let mut acceptance = document(BusinessDocumentKind::Acceptance);
+            acceptance.template_key = template_key.to_string();
+            let error = generate_document(temporary.path(), &acceptance, &format).unwrap_err();
+            assert_eq!(error.code, "BUSINESS_TEMPLATE_RENDERING_NOT_READY");
+            assert!(fs::read_dir(temporary.path()).unwrap().next().is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_template_entry_delegates_with_empty_video_resources() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut acceptance = document(BusinessDocumentKind::Acceptance);
+        acceptance.template_key = BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY.to_string();
+        acceptance.snapshot.template_source_sha256 =
+            Some(BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_SHA256.to_string());
+
+        let error = generate_document_with_template(
+            temporary.path(),
+            &acceptance,
+            &BusinessDocumentFormat::Docx,
+            Some(b"not-a-template"),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_RENDERING_NOT_READY");
+        assert!(fs::read_dir(temporary.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn resource_entry_dispatches_video_completion_renderer() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut acceptance = document(BusinessDocumentKind::Acceptance);
+        acceptance.template_key = BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_KEY.to_string();
+        acceptance.snapshot.template_source_sha256 =
+            Some(BAIETAN_VIDEO_COMPLETION_ACCEPTANCE_TEMPLATE_SHA256.to_string());
+        let data = video_completion_acceptance_data();
+
+        let error = generate_document_with_template_and_resources(
+            temporary.path(),
+            &acceptance,
+            &BusinessDocumentFormat::Docx,
+            Some(b"not-a-template"),
+            DocumentGenerationResources {
+                video_completion_acceptance: Some(&data),
+                production_result_confirmation: None,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "VALIDATION_FAILED");
+        assert!(error.message.contains("SHA-256"));
+        let staging_root = temporary.path().join(STAGING_DIRECTORY);
+        assert!(staging_root.is_dir());
+        assert!(fs::read_dir(staging_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_type().unwrap().is_dir()));
+    }
+
+    #[test]
+    fn resource_entry_dispatches_production_result_confirmation_renderer() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut acceptance = document(BusinessDocumentKind::Acceptance);
+        acceptance.template_key = BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_KEY.to_string();
+        acceptance.snapshot.template_source_sha256 =
+            Some(BAIETAN_PRODUCTION_RESULT_CONFIRMATION_TEMPLATE_SHA256.to_string());
+        let data = production_result_confirmation_data();
+
+        let error = generate_document_with_template_and_resources(
+            temporary.path(),
+            &acceptance,
+            &BusinessDocumentFormat::Docx,
+            Some(b"not-a-template"),
+            DocumentGenerationResources {
+                video_completion_acceptance: None,
+                production_result_confirmation: Some(&data),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "VALIDATION_FAILED");
+        assert!(error.message.contains("SHA-256"));
+        let staging_root = temporary.path().join(STAGING_DIRECTORY);
+        assert!(staging_root.is_dir());
+        assert!(fs::read_dir(staging_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_type().unwrap().is_dir()));
+    }
+
+    #[test]
+    fn production_result_confirmation_resources_are_rejected_for_other_templates() {
+        let temporary = tempfile::tempdir().unwrap();
+        let acceptance = document(BusinessDocumentKind::Acceptance);
+        let data = production_result_confirmation_data();
+
+        let error = generate_document_with_template_and_resources(
+            temporary.path(),
+            &acceptance,
+            &BusinessDocumentFormat::Docx,
+            None,
+            DocumentGenerationResources {
+                video_completion_acceptance: None,
+                production_result_confirmation: Some(&data),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_DATA_UNEXPECTED");
+        assert!(error.message.contains("production result confirmation"));
+        assert!(fs::read_dir(temporary.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn builtin_acceptance_template_remains_compatible_with_both_formats() {
+        validate_template(&BusinessDocumentKind::Acceptance, ACCEPTANCE_TEMPLATE_KEY).unwrap();
+        for format in [BusinessDocumentFormat::Docx, BusinessDocumentFormat::Xlsx] {
+            validate_template_for_format(
+                &BusinessDocumentKind::Acceptance,
+                ACCEPTANCE_TEMPLATE_KEY,
+                &format,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn unknown_template_key_is_rejected() {
+        let error = validate_template(
+            &BusinessDocumentKind::Acceptance,
+            "project.baietan.acceptance.unknown.v1",
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "BUSINESS_TEMPLATE_UNKNOWN");
+    }
+
+    #[test]
     fn kind_format_matrix_is_strict() {
         let temporary = tempfile::tempdir().unwrap();
         let error = generate_document(
@@ -1376,6 +2442,7 @@ mod tests {
     #[test]
     fn exact_decimal_output_preserves_large_integer_cents() {
         let mut document = document(BusinessDocumentKind::Quote);
+        document.snapshot.profile.quotation_totals = None;
         let item = &mut document.snapshot.profile.line_items[0];
         item.quantity_millis = 1_000;
         item.unit_price_cents = 9_000_000_000_000_000;
@@ -1413,6 +2480,26 @@ mod tests {
         reconcile_staging(temporary.path()).unwrap();
         assert!(!staged_path.exists());
         assert!(!generation_is_active(temporary.path(), &generated_name).unwrap());
+    }
+
+    #[test]
+    fn normalized_template_staging_uses_the_shared_recovery_lease() {
+        let temporary = tempfile::tempdir().unwrap();
+        let template_version_id = Uuid::new_v4().to_string();
+        let staged = stage_normalized_template(temporary.path(), &template_version_id).unwrap();
+        fs::write(staged.path(), b"normalized template").unwrap();
+        let staged_path = staged.path().to_path_buf();
+        let generated_name = staged_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        reconcile_staging(temporary.path()).unwrap();
+        assert!(staged_path.exists());
+        assert!(generation_is_active(temporary.path(), &generated_name).unwrap());
+        drop(staged);
+        assert!(!staged_path.exists());
     }
 
     #[test]

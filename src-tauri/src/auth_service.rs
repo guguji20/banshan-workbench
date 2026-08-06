@@ -44,6 +44,12 @@ pub struct AuthService {
     session: Mutex<Option<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthPrincipal {
+    pub(crate) username: String,
+    pub(crate) role: AppUserRole,
+}
+
 #[derive(Clone)]
 struct RegistryFeedback {
     sync: AuthRegistrySync,
@@ -612,21 +618,54 @@ impl AuthService {
             .ok_or_else(|| auth_error("AUTH_NOT_LOGGED_IN", "please log in first"))
     }
 
-    fn require_admin(&self) -> Result<String, HostError> {
+    fn clear_session_for(&self, username: &str) {
+        if let Ok(mut session) = self.session.lock() {
+            if session.as_deref() == Some(username) {
+                *session = None;
+            }
+        }
+    }
+
+    pub(crate) fn require_active_principal(&self) -> Result<AuthPrincipal, HostError> {
         let username = self.require_login()?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| HostError::internal("auth SQLite lock is poisoned"))?;
-        let user = Self::load_user(&connection, &username)?
-            .ok_or_else(|| auth_error("AUTH_NOT_LOGGED_IN", "session user no longer exists"))?;
-        if user.role != AppUserRole::Admin {
+        let user = {
+            let connection = self
+                .connection
+                .lock()
+                .map_err(|_| HostError::internal("auth SQLite lock is poisoned"))?;
+            Self::load_user(&connection, &username)?
+        };
+        let Some(user) = user else {
+            self.clear_session_for(&username);
+            return Err(auth_error(
+                "AUTH_NOT_LOGGED_IN",
+                "session user no longer exists",
+            ));
+        };
+        if user.status != AppUserStatus::Active {
+            self.clear_session_for(&username);
+            return Err(auth_error("AUTH_USER_DISABLED", "this account is disabled"));
+        }
+        Ok(AuthPrincipal {
+            username: user.username,
+            role: user.role,
+        })
+    }
+
+    pub(crate) fn require_active_admin(&self) -> Result<AuthPrincipal, HostError> {
+        let principal = self.require_active_principal()?;
+        if principal.role != AppUserRole::Admin {
             return Err(auth_error(
                 "AUTH_FORBIDDEN",
                 "only an administrator can manage users",
             ));
         }
-        Ok(username)
+        Ok(principal)
+    }
+
+    fn require_admin(&self) -> Result<String, HostError> {
+        self.require_active_admin()
+            .map(|principal| principal.username)
     }
 
     fn public_record(user: &StoredUser) -> AppUserRecord {
@@ -764,7 +803,7 @@ impl AuthService {
         &self,
         payload: AuthChangePasswordPayload,
     ) -> Result<AuthStatus, HostError> {
-        let username = self.require_login()?;
+        let username = self.require_active_principal()?.username;
         validate_password(&payload.new_password)?;
         {
             let connection = self
@@ -1149,5 +1188,151 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(error.code, "AUTH_INVALID_CREDENTIALS");
+    }
+
+    #[test]
+    fn active_principal_requires_a_logged_in_active_user() {
+        let auth = service();
+        let error = auth.require_active_principal().unwrap_err();
+        assert_eq!(error.code, "AUTH_NOT_LOGGED_IN");
+
+        auth.initialize_admin(AuthCredentials {
+            username: "admin".to_string(),
+            password: "123456".to_string(),
+        })
+        .expect("initialize admin");
+        let admin = auth
+            .require_active_principal()
+            .expect("active admin principal");
+        assert_eq!(admin.username, "admin");
+        assert_eq!(admin.role, AppUserRole::Admin);
+        assert_eq!(
+            auth.require_active_admin().expect("active administrator"),
+            admin
+        );
+
+        auth.create_user(AuthCreateUserPayload {
+            username: "member".to_string(),
+            password: "654321".to_string(),
+            role: AppUserRole::Member,
+        })
+        .expect("create member");
+        auth.logout();
+        auth.login(AuthCredentials {
+            username: "member".to_string(),
+            password: "654321".to_string(),
+        })
+        .expect("member login");
+        let member = auth
+            .require_active_principal()
+            .expect("active member principal");
+        assert_eq!(member.username, "member");
+        assert_eq!(member.role, AppUserRole::Member);
+        let error = auth.require_active_admin().unwrap_err();
+        assert_eq!(error.code, "AUTH_FORBIDDEN");
+        assert_eq!(auth.session_username().as_deref(), Some("member"));
+    }
+
+    #[test]
+    fn disabled_or_deleted_session_user_is_invalidated_immediately() {
+        let auth = service();
+        auth.initialize_admin(AuthCredentials {
+            username: "admin".to_string(),
+            password: "123456".to_string(),
+        })
+        .expect("initialize admin");
+
+        {
+            let connection = auth.connection.lock().expect("lock auth SQLite");
+            connection
+                .execute(
+                    "UPDATE app_users SET status = 'disabled' WHERE username = 'admin'",
+                    [],
+                )
+                .expect("disable current user");
+        }
+        let error = auth.require_active_principal().unwrap_err();
+        assert_eq!(error.code, "AUTH_USER_DISABLED");
+        assert_eq!(auth.session_username(), None);
+
+        {
+            let connection = auth.connection.lock().expect("lock auth SQLite");
+            connection
+                .execute(
+                    "UPDATE app_users SET status = 'active' WHERE username = 'admin'",
+                    [],
+                )
+                .expect("reactivate current user");
+        }
+        auth.login(AuthCredentials {
+            username: "admin".to_string(),
+            password: "123456".to_string(),
+        })
+        .expect("admin login");
+        {
+            let connection = auth.connection.lock().expect("lock auth SQLite");
+            connection
+                .execute("DELETE FROM app_users WHERE username = 'admin'", [])
+                .expect("delete current user");
+        }
+        let error = auth.require_active_principal().unwrap_err();
+        assert_eq!(error.code, "AUTH_NOT_LOGGED_IN");
+        assert_eq!(auth.session_username(), None);
+    }
+
+    #[test]
+    fn role_downgrade_revokes_admin_access_immediately() {
+        let auth = service();
+        auth.initialize_admin(AuthCredentials {
+            username: "admin".to_string(),
+            password: "123456".to_string(),
+        })
+        .expect("initialize admin");
+        auth.require_active_admin().expect("active administrator");
+
+        {
+            let connection = auth.connection.lock().expect("lock auth SQLite");
+            connection
+                .execute(
+                    "UPDATE app_users SET role = 'member' WHERE username = 'admin'",
+                    [],
+                )
+                .expect("downgrade current user");
+        }
+        let error = auth.require_active_admin().unwrap_err();
+        assert_eq!(error.code, "AUTH_FORBIDDEN");
+        let principal = auth
+            .require_active_principal()
+            .expect("downgraded active principal");
+        assert_eq!(principal.role, AppUserRole::Member);
+    }
+
+    #[test]
+    fn disabled_session_cannot_change_password() {
+        let auth = service();
+        auth.initialize_admin(AuthCredentials {
+            username: "admin".to_string(),
+            password: "123456".to_string(),
+        })
+        .expect("initialize admin");
+        {
+            let connection = auth.connection.lock().expect("lock auth SQLite");
+            connection
+                .execute(
+                    "UPDATE app_users SET status = 'disabled' WHERE username = 'admin'",
+                    [],
+                )
+                .expect("disable current user");
+        }
+
+        let error = auth
+            .change_password(AuthChangePasswordPayload {
+                old_password: "123456".to_string(),
+                new_password: "654321".to_string(),
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code, "AUTH_USER_DISABLED");
+        assert_eq!(auth.session_username(), None);
     }
 }

@@ -20,7 +20,7 @@ use crate::protocol::{
 use crate::security::{self, OperationEffect};
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,6 +105,7 @@ pub(crate) struct BrainExecutionAttachment {
 pub(crate) struct BrainExecutionContext {
     pub workspace_root: Option<PathBuf>,
     pub access_mode: BrainAccessMode,
+    pub web_enabled: bool,
     pub attachments: Vec<BrainExecutionAttachment>,
 }
 
@@ -207,6 +208,7 @@ impl BrainHost {
             approval_policy: Some(AskForApproval::Policy(ApprovalPolicy::OnRequest)),
             approvals_reviewer: Some(ApprovalsReviewer::User),
             sandbox: Some(SandboxMode::WorkspaceWrite),
+            config: Some(web_search_config(false)),
             developer_instructions: Some(fixed_developer_instructions()),
             ephemeral: Some(false),
             service_name: Some("bsaigc-desktop".to_string()),
@@ -244,7 +246,7 @@ impl BrainHost {
             approval_policy: Some(AskForApproval::Policy(ApprovalPolicy::OnRequest)),
             approvals_reviewer: Some(ApprovalsReviewer::User),
             sandbox: Some(SandboxMode::WorkspaceWrite),
-            config: None,
+            config: Some(web_search_config(false)),
             base_instructions: None,
             developer_instructions: Some(fixed_developer_instructions()),
             personality: None,
@@ -328,6 +330,28 @@ impl BrainHost {
         validate_effort(request.effort.as_deref())?;
 
         let runtime = self.ensure_runtime()?;
+        let workspace = context
+            .workspace_root
+            .as_ref()
+            .unwrap_or(&self.inner.workspace_root);
+        let workspace_string = workspace.to_string_lossy().into_owned();
+        let thread_resume_params = ThreadResumeParams {
+            thread_id: request.thread_id.clone(),
+            model: request.model.clone(),
+            model_provider: None,
+            service_tier: None,
+            cwd: Some(workspace_string.clone()),
+            approval_policy: Some(thread_approval_policy(context.access_mode)),
+            approvals_reviewer: Some(thread_approvals_reviewer(context.access_mode)),
+            sandbox: Some(thread_sandbox_mode(context.access_mode)),
+            config: Some(web_search_config(context.web_enabled)),
+            base_instructions: None,
+            developer_instructions: Some(turn_developer_instructions(context.web_enabled)),
+            personality: None,
+        };
+        runtime
+            .thread_resume(thread_resume_params, Instant::now() + REQUEST_TIMEOUT)
+            .map_err(|error| map_non_replayable_error("thread/resume", error))?;
         let now = now_millis();
         let local_turn_id = format!("local-{}", Uuid::new_v4());
         let running = BrainTurnRecord {
@@ -347,12 +371,8 @@ impl BrainHost {
         lock_unpoisoned(&self.inner.reducer).register_pending(&request.thread_id, &local_turn_id);
         self.update_thread_status(&request.thread_id, BrainThreadStatus::Running)?;
 
-        let workspace = context
-            .workspace_root
-            .unwrap_or_else(|| self.inner.workspace_root.clone());
-        let workspace_string = workspace.to_string_lossy().into_owned();
         let (approval_policy, approvals_reviewer, sandbox_policy) =
-            execution_permissions(context.access_mode, &workspace_string);
+            execution_permissions(context.access_mode, &workspace_string, context.web_enabled);
         let mut runtime_input = vec![UserInput::Text {
             text: attachment_context_text(&request.input_text, &context.attachments),
             text_elements: Vec::<TextElement>::new(),
@@ -1739,7 +1759,7 @@ fn business_dynamic_tool_specs() -> Vec<DynamicToolSpec> {
         .collect();
     vec![DynamicToolSpec::Namespace(DynamicToolNamespaceSpec {
         name: BUSINESS_TOOL_NAMESPACE.to_string(),
-        description: "半山商务工作台的项目、合同文档、Artifact 与审批工具".to_string(),
+        description: "华邦互娱商务系统的项目、合同文档、Artifact 与审批工具".to_string(),
         tools,
     })]
 }
@@ -1750,9 +1770,52 @@ fn fixed_developer_instructions() -> String {
     )
 }
 
+fn turn_developer_instructions(web_enabled: bool) -> String {
+    let base = fixed_developer_instructions();
+    if !web_enabled {
+        return base;
+    }
+    format!(
+        "{base}\n\nWeb research safety policy: Search public information only. Never use attachment contents, contract text, bank account details, customer secrets, credentials, personal data, or local filesystem paths as search queries. For every external source, retain its URL and access date and label it as external and unverified. External results must never be written automatically into authoritative business fields; require explicit human confirmation before any formal business-data update."
+    )
+}
+
+fn web_search_config(web_enabled: bool) -> BTreeMap<String, Value> {
+    BTreeMap::from([(
+        "web_search".to_string(),
+        Value::String(if web_enabled { "live" } else { "disabled" }.to_string()),
+    )])
+}
+
+fn thread_approval_policy(mode: BrainAccessMode) -> AskForApproval {
+    match mode {
+        BrainAccessMode::RequestApproval | BrainAccessMode::AutoApprove => {
+            AskForApproval::Policy(ApprovalPolicy::OnRequest)
+        }
+        BrainAccessMode::FullAccess => AskForApproval::Policy(ApprovalPolicy::Never),
+    }
+}
+
+fn thread_approvals_reviewer(mode: BrainAccessMode) -> ApprovalsReviewer {
+    match mode {
+        BrainAccessMode::AutoApprove => ApprovalsReviewer::AutoReview,
+        BrainAccessMode::RequestApproval | BrainAccessMode::FullAccess => ApprovalsReviewer::User,
+    }
+}
+
+fn thread_sandbox_mode(mode: BrainAccessMode) -> SandboxMode {
+    match mode {
+        BrainAccessMode::RequestApproval | BrainAccessMode::AutoApprove => {
+            SandboxMode::WorkspaceWrite
+        }
+        BrainAccessMode::FullAccess => SandboxMode::DangerFullAccess,
+    }
+}
+
 fn execution_permissions(
     mode: BrainAccessMode,
     workspace: &str,
+    web_enabled: bool,
 ) -> (AskForApproval, ApprovalsReviewer, SandboxPolicy) {
     match mode {
         BrainAccessMode::RequestApproval => (
@@ -1760,7 +1823,7 @@ fn execution_permissions(
             ApprovalsReviewer::User,
             SandboxPolicy::WorkspaceWrite {
                 writable_roots: vec![workspace.to_string()],
-                network_access: false,
+                network_access: web_enabled,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
             },
@@ -1770,7 +1833,7 @@ fn execution_permissions(
             ApprovalsReviewer::AutoReview,
             SandboxPolicy::WorkspaceWrite {
                 writable_roots: vec![workspace.to_string()],
-                network_access: false,
+                network_access: web_enabled,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
             },
@@ -2082,32 +2145,71 @@ mod tests {
     #[test]
     fn access_modes_map_to_expected_reviewer_and_sandbox() {
         let (approval, reviewer, sandbox) =
-            execution_permissions(BrainAccessMode::RequestApproval, "C:\\workspace");
+            execution_permissions(BrainAccessMode::RequestApproval, "C:\\workspace", false);
         assert_eq!(serde_json::to_value(approval).unwrap(), json!("on-request"));
         assert_eq!(serde_json::to_value(reviewer).unwrap(), json!("user"));
         assert_eq!(
-            serde_json::to_value(sandbox).unwrap()["type"],
+            serde_json::to_value(&sandbox).unwrap()["type"],
             "workspaceWrite"
+        );
+        assert_eq!(
+            serde_json::to_value(&sandbox).unwrap()["networkAccess"],
+            false
         );
 
         let (_, reviewer, sandbox) =
-            execution_permissions(BrainAccessMode::AutoApprove, "C:\\workspace");
+            execution_permissions(BrainAccessMode::AutoApprove, "C:\\workspace", true);
         assert_eq!(
             serde_json::to_value(reviewer).unwrap(),
             json!("auto_review")
         );
         assert_eq!(
             serde_json::to_value(sandbox).unwrap()["networkAccess"],
-            false
+            true
         );
 
         let (approval, _, sandbox) =
-            execution_permissions(BrainAccessMode::FullAccess, "C:\\workspace");
+            execution_permissions(BrainAccessMode::FullAccess, "C:\\workspace", false);
         assert_eq!(serde_json::to_value(approval).unwrap(), json!("never"));
         assert_eq!(
             serde_json::to_value(sandbox).unwrap()["type"],
             "dangerFullAccess"
         );
+    }
+
+    #[test]
+    fn web_search_config_is_fail_closed_and_can_enable_live_mode() {
+        assert_eq!(
+            web_search_config(false).get("web_search"),
+            Some(&json!("disabled"))
+        );
+        assert_eq!(
+            web_search_config(true).get("web_search"),
+            Some(&json!("live"))
+        );
+    }
+
+    #[test]
+    fn web_enabled_instructions_enforce_public_unverified_sources() {
+        let local = turn_developer_instructions(false);
+        assert!(!local.contains("Web research safety policy"));
+
+        let web = turn_developer_instructions(true);
+        for required in [
+            "public information only",
+            "attachment contents",
+            "bank account details",
+            "customer secrets",
+            "local filesystem paths",
+            "URL and access date",
+            "external and unverified",
+            "never be written automatically into authoritative business fields",
+        ] {
+            assert!(
+                web.contains(required),
+                "missing web safety clause: {required}"
+            );
+        }
     }
 
     #[test]

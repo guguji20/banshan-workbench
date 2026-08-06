@@ -1,0 +1,589 @@
+name: Promote 华邦互娱商务系统 1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Full 40-character Git commit shared by both platform artifacts
+        required: true
+        type: string
+      windows_run_id:
+        description: Successful Windows gate-evidence workflow run ID
+        required: true
+        type: string
+      macos_run_id:
+        description: Successful macOS gate-evidence workflow run ID
+        required: true
+        type: string
+      acceptance_manifest_path:
+        description: Committed final acceptance manifest path
+        required: true
+        type: string
+        default: release-evidence/business-workbench-1.0-final-gates.json
+      confirmation:
+        description: Type PROMOTE-BUSINESS-WORKBENCH-1.0
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: business-workbench-1.0-formal-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Verify all gates and publish both platforms
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: formal-release
+    env:
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      R2_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+      RELEASE_PUBLIC_BASE: ${{ vars.RELEASE_PUBLIC_BASE }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+    steps:
+      - name: Reject incomplete authorization
+        shell: bash
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
+          INPUT_WINDOWS_RUN_ID: ${{ inputs.windows_run_id }}
+          INPUT_MACOS_RUN_ID: ${{ inputs.macos_run_id }}
+        run: |
+          set -euo pipefail
+          test "$INPUT_CONFIRMATION" = "PROMOTE-BUSINESS-WORKBENCH-1.0"
+          [[ "$INPUT_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_WINDOWS_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$INPUT_MACOS_RUN_ID" =~ ^[0-9]+$ ]]
+          test -n "$R2_ENDPOINT"
+          test -n "$R2_BUCKET"
+          test -n "$RELEASE_PUBLIC_BASE"
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          [[ "$R2_ENDPOINT" == https://* ]]
+          [[ "$RELEASE_PUBLIC_BASE" == https://* ]]
+          [[ "$R2_BUCKET" =~ ^[A-Za-z0-9._-]+$ ]]
+
+      - name: Verify evidence workflow runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          WINDOWS_RUN_ID: ${{ inputs.windows_run_id }}
+          MACOS_RUN_ID: ${{ inputs.macos_run_id }}
+        run: |
+          set -euo pipefail
+          verify_run() {
+            local run_id="$1"
+            local expected_path="$2"
+            local payload
+            payload="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            test "$(jq -r '.conclusion' <<<"$payload")" = "success"
+            test "$(jq -r '.head_sha' <<<"$payload")" = "$RELEASE_COMMIT"
+            test "$(jq -r '.path' <<<"$payload")" = "$expected_path"
+            test "$(jq -r '.event' <<<"$payload")" = "workflow_dispatch"
+          }
+          verify_run "$WINDOWS_RUN_ID" ".github/workflows/build-windows.yml"
+          verify_run "$MACOS_RUN_ID" ".github/workflows/build-macos.yml"
+
+      - name: Check out exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify clean commit and version contract
+        id: contract
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          ACCEPTANCE_MANIFEST_PATH: ${{ inputs.acceptance_manifest_path }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test -z "$(git status --porcelain)"
+          [[ "$ACCEPTANCE_MANIFEST_PATH" =~ ^[A-Za-z0-9._/-]+$ ]]
+          [[ "$ACCEPTANCE_MANIFEST_PATH" != /* ]]
+          [[ "/$ACCEPTANCE_MANIFEST_PATH/" != *"/../"* ]]
+          git ls-files --error-unmatch -- "$ACCEPTANCE_MANIFEST_PATH" >/dev/null
+          test -f "$ACCEPTANCE_MANIFEST_PATH"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          [[ "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$PACKAGE_VERSION" = "$TAURI_VERSION"
+          test "$PACKAGE_VERSION" = "$CARGO_VERSION"
+          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "acceptance_path=$ACCEPTANCE_MANIFEST_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows gate evidence
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.windows_run_id }}
+          pattern: windows-release-gate-evidence-v*-${{ inputs.release_commit }}-*
+          path: .runtime/formal-release/windows
+          merge-multiple: true
+
+      - name: Download macOS gate evidence
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.macos_run_id }}
+          pattern: huabang-business-system-*-aarch64-apple-darwin-${{ inputs.release_commit }}-release-gate-evidence
+          path: .runtime/formal-release/macos
+          merge-multiple: true
+
+      - name: Verify unified formal release evidence
+        shell: bash
+        env:
+          WINDOWS_EVIDENCE_DIR: .runtime/formal-release/windows
+          MACOS_EVIDENCE_DIR: .runtime/formal-release/macos
+          ACCEPTANCE_FILE: ${{ steps.contract.outputs.acceptance_path }}
+          EXPECTED_VERSION: ${{ steps.contract.outputs.version }}
+          EXPECTED_COMMIT: ${{ inputs.release_commit }}
+          OUTPUT_MANIFEST: .runtime/formal-release/formal-release-manifest.json
+        run: |
+          set -euo pipefail
+          pnpm test:macos-release-evidence
+          pnpm test:formal-release-evidence
+          pnpm test:release-workflow-policy
+          pnpm verify:macos-release-evidence -- \
+            --release-root "$MACOS_EVIDENCE_DIR" \
+            --version "$EXPECTED_VERSION" \
+            --commit "$EXPECTED_COMMIT"
+          node --input-type=module <<'NODE'
+          import { promises as fs } from 'node:fs';
+          import path from 'node:path';
+          import { verifyFormalReleaseEvidence } from './scripts/verify-formal-release-evidence.mjs';
+
+          const verified = await verifyFormalReleaseEvidence({
+            windowsDir: process.env.WINDOWS_EVIDENCE_DIR,
+            macosDir: process.env.MACOS_EVIDENCE_DIR,
+            acceptanceFile: process.env.ACCEPTANCE_FILE,
+            expectedVersion: process.env.EXPECTED_VERSION,
+            expectedCommit: process.env.EXPECTED_COMMIT,
+          });
+          const asset = ({ name, sizeBytes, sha256 }) => ({ name, sizeBytes, sha256 });
+          verified.result.assets = {
+            windows: asset(verified.windows.installer),
+            macos: asset(verified.macos.dmg),
+            source: asset(verified.windows.sourceArchive),
+          };
+          await fs.mkdir(path.dirname(process.env.OUTPUT_MANIFEST), { recursive: true });
+          await fs.writeFile(process.env.OUTPUT_MANIFEST, `${JSON.stringify(verified.result, null, 2)}\n`);
+          NODE
+          node -e "const m=require('./$OUTPUT_MANIFEST'); if(m.distributionAllowed!==true||m.gitCommit!==process.env.EXPECTED_COMMIT||Object.keys(m.assets).sort().join(',')!=='macos,source,windows') process.exit(1)"
+
+      - name: Assemble immutable formal release assets
+        id: assets
+        shell: bash
+        env:
+          ACCEPTANCE_FILE: ${{ steps.contract.outputs.acceptance_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime/formal-release/publish
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const manifest = JSON.parse(fs.readFileSync('.runtime/formal-release/formal-release-manifest.json', 'utf8'));
+          const findOne = (root, name) => {
+            const matches = [];
+            const walk = (directory) => fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
+              const full = path.join(directory, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (entry.isFile() && entry.name === name) matches.push(full);
+            });
+            walk(root);
+            if (matches.length !== 1) throw new Error(`Expected one ${name}, found ${matches.length}`);
+            return matches[0];
+          };
+          const roots = { windows: '.runtime/formal-release/windows', macos: '.runtime/formal-release/macos', source: '.runtime/formal-release/windows' };
+          for (const key of ['windows', 'macos', 'source']) {
+            const asset = manifest.assets[key];
+            fs.copyFileSync(findOne(roots[key], asset.name), path.join('.runtime/formal-release/publish', asset.name));
+          }
+          fs.copyFileSync('.runtime/formal-release/formal-release-manifest.json', '.runtime/formal-release/publish/formal-release-manifest.json');
+          fs.copyFileSync(process.env.ACCEPTANCE_FILE, '.runtime/formal-release/publish/final-acceptance.json');
+          const notes = path.resolve(path.dirname(process.env.ACCEPTANCE_FILE), '..', manifest.releaseNotes.path);
+          fs.copyFileSync(notes, '.runtime/formal-release/publish/RELEASE_NOTES.md');
+          NODE
+
+      - name: Prepare current manifests and rollback state
+        shell: bash
+        env:
+          PREFIX: releases/business-workbench-1.0/${{ steps.contract.outputs.tag }}/${{ inputs.release_commit }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .runtime/formal-release/previous
+          capture_previous() {
+            local key="$1"
+            local destination="$2"
+            local state_file="$3"
+            local error_file="$state_file.error"
+            local head_file="$state_file.head.json"
+            local etag_file="$state_file.etag"
+            if aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$R2_ENDPOINT" >"$head_file" 2>"$error_file"; then
+              jq -er '.ETag | strings | select(length > 0)' "$head_file" > "$etag_file"
+              aws s3api get-object \
+                --bucket "$R2_BUCKET" \
+                --key "$key" \
+                --if-match "$(cat "$etag_file")" \
+                --endpoint-url "$R2_ENDPOINT" \
+                "$destination" >/dev/null
+              printf 'present\n' > "$state_file"
+            elif grep -Eqi '(404|Not Found|NoSuchKey)' "$error_file"; then
+              rm -f "$head_file" "$etag_file"
+              printf 'absent\n' > "$state_file"
+            else
+              cat "$error_file" >&2
+              return 1
+            fi
+            rm -f "$error_file"
+          }
+          capture_previous "version.json" .runtime/formal-release/previous/version.json .runtime/formal-release/previous/version.json.state
+          capture_previous "version-mac.json" .runtime/formal-release/previous/version-mac.json .runtime/formal-release/previous/version-mac.json.state
+          node <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('.runtime/formal-release/formal-release-manifest.json', 'utf8'));
+          const base = `${process.env.RELEASE_PUBLIC_BASE.replace(/\/$/, '')}/${process.env.PREFIX}`;
+          const common = { productRelease: manifest.productRelease, version: manifest.binaryVersion, gitCommit: manifest.gitCommit, releaseManifestUrl: `${base}/formal-release-manifest.json` };
+          fs.writeFileSync('.runtime/formal-release/version.json', JSON.stringify({ ...common, platform: 'windows-x86_64', url: `${base}/${manifest.assets.windows.name}`, sha256: manifest.assets.windows.sha256 }, null, 2) + '\n');
+          fs.writeFileSync('.runtime/formal-release/version-mac.json', JSON.stringify({ ...common, platform: 'macos-arm64', url: `${base}/${manifest.assets.macos.name}`, sha256: manifest.assets.macos.sha256 }, null, 2) + '\n');
+          NODE
+
+      - name: Publish GitHub release and R2 current manifests transactionally
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          PREFIX: releases/business-workbench-1.0/${{ steps.contract.outputs.tag }}/${{ inputs.release_commit }}
+        run: |
+          set -Eeuo pipefail
+          TAG="${{ steps.contract.outputs.tag }}"
+          IMMUTABLE_UPLOAD_STARTED=0
+          RELEASE_OR_TAG_CLEANUP_REQUIRED=0
+          CURRENT_UPDATE_STARTED=0
+          ROLLBACK_FAILED=0
+          OWNED_IMMUTABLE_OBJECTS=.runtime/formal-release/owned-immutable-objects.tsv
+          is_not_found_error() {
+            grep -Eqi '(404|Not Found|NoSuchKey|release not found)' "$1"
+          }
+          assert_current_unchanged() {
+            local key="$1"
+            local state_file="$2"
+            local previous_file="$3"
+            local state
+            state="$(cat "$state_file")"
+            mkdir -p .runtime/formal-release/prepublish-readback
+            if [ "$state" = "present" ]; then
+              local previous_etag
+              local current_etag
+              previous_etag="$(cat "$state_file.etag")"
+              current_etag="$(aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --query ETag --output text --endpoint-url "$R2_ENDPOINT")"
+              test "$current_etag" = "$previous_etag"
+              aws s3api get-object \
+                --bucket "$R2_BUCKET" \
+                --key "$key" \
+                --if-match "$previous_etag" \
+                --endpoint-url "$R2_ENDPOINT" \
+                ".runtime/formal-release/prepublish-readback/$key" >/dev/null
+              cmp "$previous_file" ".runtime/formal-release/prepublish-readback/$key"
+            elif [ "$state" = "absent" ]; then
+              local error_file=".runtime/formal-release/prepublish-readback/$key.error"
+              if aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$R2_ENDPOINT" >/dev/null 2>"$error_file"; then
+                echo "Current manifest appeared after rollback state capture: $key" >&2
+                return 1
+              elif ! is_not_found_error "$error_file"; then
+                cat "$error_file" >&2
+                return 1
+              fi
+            else
+              echo "Invalid rollback state for $key: $state" >&2
+              return 1
+            fi
+          }
+          publish_current_manifest() {
+            local key="$1"
+            local state_file="$2"
+            local source_file="$3"
+            local state
+            local published_etag
+            state="$(cat "$state_file")"
+            mkdir -p .runtime/formal-release/published-current
+            if [ "$state" = "present" ]; then
+              published_etag="$(aws s3api put-object \
+                --bucket "$R2_BUCKET" \
+                --key "$key" \
+                --body "$source_file" \
+                --if-match "$(cat "$state_file.etag")" \
+                --content-type application/json \
+                --cache-control 'no-store,max-age=0' \
+                --query ETag \
+                --output text \
+                --endpoint-url "$R2_ENDPOINT")"
+            elif [ "$state" = "absent" ]; then
+              published_etag="$(aws s3api put-object \
+                --bucket "$R2_BUCKET" \
+                --key "$key" \
+                --body "$source_file" \
+                --if-none-match '*' \
+                --content-type application/json \
+                --cache-control 'no-store,max-age=0' \
+                --query ETag \
+                --output text \
+                --endpoint-url "$R2_ENDPOINT")"
+            else
+              echo "Invalid rollback state for $key: $state" >&2
+              return 1
+            fi
+            test -n "$published_etag"
+            test "$published_etag" != "None"
+            printf '%s\n' "$published_etag" > ".runtime/formal-release/published-current/$key.etag"
+          }
+          restore_current_manifest() {
+            local key="$1"
+            local state_file="$2"
+            local previous_file="$3"
+            local state
+            local published_etag_file=".runtime/formal-release/published-current/$key.etag"
+            if [ ! -f "$published_etag_file" ]; then
+              return 0
+            fi
+            state="$(cat "$state_file")"
+            mkdir -p .runtime/formal-release/rollback-readback
+            if [ "$state" = "present" ]; then
+              local restored_etag
+              restored_etag="$(aws s3api put-object \
+                --bucket "$R2_BUCKET" \
+                --key "$key" \
+                --body "$previous_file" \
+                --if-match "$(cat "$published_etag_file")" \
+                --content-type application/json \
+                --cache-control 'no-store,max-age=0' \
+                --query ETag \
+                --output text \
+                --endpoint-url "$R2_ENDPOINT")" || return 1
+              aws s3api get-object \
+                --bucket "$R2_BUCKET" \
+                --key "$key" \
+                --if-match "$restored_etag" \
+                --endpoint-url "$R2_ENDPOINT" \
+                ".runtime/formal-release/rollback-readback/$key" >/dev/null || return 1
+              cmp "$previous_file" ".runtime/formal-release/rollback-readback/$key" || return 1
+            elif [ "$state" = "absent" ]; then
+              local current_etag
+              current_etag="$(aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --query ETag --output text --endpoint-url "$R2_ENDPOINT")" || return 1
+              if [ "$current_etag" != "$(cat "$published_etag_file")" ]; then
+                echo "Rollback refused to delete a current manifest changed by another publisher: $key" >&2
+                return 1
+              fi
+              aws s3api delete-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$R2_ENDPOINT" >/dev/null || return 1
+              local error_file=".runtime/formal-release/rollback-readback/$key.error"
+              if aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$R2_ENDPOINT" >/dev/null 2>"$error_file"; then
+                echo "Rollback failed to remove $key." >&2
+                return 1
+              elif ! is_not_found_error "$error_file"; then
+                cat "$error_file" >&2
+                return 1
+              fi
+            else
+              echo "Invalid rollback state for $key: $state" >&2
+              return 1
+            fi
+          }
+          delete_release_and_tag() {
+            local error_file=".runtime/formal-release/release-delete.error"
+            if gh release view "$TAG" >/dev/null 2>"$error_file"; then
+              gh release delete "$TAG" --cleanup-tag --yes || return 1
+            elif ! is_not_found_error "$error_file"; then
+              cat "$error_file" >&2
+              return 1
+            fi
+            rm -f "$error_file"
+            error_file=".runtime/formal-release/tag-delete.error"
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>"$error_file"; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null || return 1
+            elif ! is_not_found_error "$error_file"; then
+              cat "$error_file" >&2
+              return 1
+            fi
+            rm -f "$error_file"
+          }
+          content_type_for() {
+            case "$1" in
+              *.json) printf 'application/json\n' ;;
+              *.md) printf 'text/markdown; charset=utf-8\n' ;;
+              *.zip) printf 'application/zip\n' ;;
+              *.dmg) printf 'application/x-apple-diskimage\n' ;;
+              *.exe) printf 'application/vnd.microsoft.portable-executable\n' ;;
+              *) printf 'application/octet-stream\n' ;;
+            esac
+          }
+          upload_immutable_object() {
+            local file="$1"
+            local name
+            local key
+            local etag
+            name="$(basename "$file")"
+            key="$PREFIX/$name"
+            etag="$(aws s3api put-object \
+              --bucket "$R2_BUCKET" \
+              --key "$key" \
+              --body "$file" \
+              --if-none-match '*' \
+              --content-type "$(content_type_for "$name")" \
+              --cache-control 'public,max-age=31536000,immutable' \
+              --query ETag \
+              --output text \
+              --endpoint-url "$R2_ENDPOINT")"
+            test -n "$etag"
+            test "$etag" != "None"
+            printf '%s\t%s\n' "$key" "$etag" >> "$OWNED_IMMUTABLE_OBJECTS"
+            aws s3api get-object \
+              --bucket "$R2_BUCKET" \
+              --key "$key" \
+              --if-match "$etag" \
+              --endpoint-url "$R2_ENDPOINT" \
+              ".runtime/formal-release/readback/$name" >/dev/null
+            test "$(sha256sum "$file" | cut -d' ' -f1)" = "$(sha256sum ".runtime/formal-release/readback/$name" | cut -d' ' -f1)"
+          }
+          cleanup_immutable_prefix() {
+            local index
+            local key
+            local expected_etag
+            local current_etag
+            local error_file
+            local failed=0
+            local -a owned_objects=()
+            if [ ! -s "$OWNED_IMMUTABLE_OBJECTS" ]; then
+              return 0
+            fi
+            mapfile -t owned_objects < "$OWNED_IMMUTABLE_OBJECTS"
+            for ((index=${#owned_objects[@]} - 1; index >= 0; index--)); do
+              IFS=$'\t' read -r key expected_etag <<<"${owned_objects[$index]}"
+              current_etag="$(aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --query ETag --output text --endpoint-url "$R2_ENDPOINT")" || {
+                failed=1
+                continue
+              }
+              if [ "$current_etag" != "$expected_etag" ]; then
+                echo "Rollback refused to delete an immutable object changed by another publisher: $key" >&2
+                failed=1
+                continue
+              fi
+              aws s3api delete-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$R2_ENDPOINT" >/dev/null || {
+                failed=1
+                continue
+              }
+              error_file=".runtime/formal-release/readback/$(basename "$key").delete.error"
+              if aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$R2_ENDPOINT" >/dev/null 2>"$error_file"; then
+                echo "Rollback failed to remove owned immutable object: $key" >&2
+                failed=1
+              elif ! is_not_found_error "$error_file"; then
+                cat "$error_file" >&2
+                failed=1
+              fi
+              rm -f "$error_file"
+            done
+            [ "$failed" = 0 ]
+          }
+          rollback() {
+            local status="$1"
+            trap - ERR INT TERM
+            set +e
+            if [ "$CURRENT_UPDATE_STARTED" = 1 ]; then
+              restore_current_manifest "version.json" .runtime/formal-release/previous/version.json.state .runtime/formal-release/previous/version.json || ROLLBACK_FAILED=1
+              restore_current_manifest "version-mac.json" .runtime/formal-release/previous/version-mac.json.state .runtime/formal-release/previous/version-mac.json || ROLLBACK_FAILED=1
+            fi
+            if [ "$IMMUTABLE_UPLOAD_STARTED" = 1 ]; then
+              cleanup_immutable_prefix || ROLLBACK_FAILED=1
+            fi
+            if [ "$RELEASE_OR_TAG_CLEANUP_REQUIRED" = 1 ]; then
+              delete_release_and_tag || ROLLBACK_FAILED=1
+            fi
+            if [ "$ROLLBACK_FAILED" = 1 ]; then
+              echo "Formal release failed and at least one rollback action also failed." >&2
+            else
+              echo "Formal release failed; GitHub and R2 publication state was rolled back." >&2
+            fi
+            [ "$status" -ne 0 ] || status=1
+            exit "$status"
+          }
+          trap 'rollback $?' ERR
+          trap 'rollback 130' INT
+          trap 'rollback 143' TERM
+
+          release_error=".runtime/formal-release/release-preflight.error"
+          if gh release view "$TAG" >/dev/null 2>"$release_error"; then
+            echo "Release already exists; refusing to overwrite." >&2
+            exit 1
+          elif ! is_not_found_error "$release_error"; then
+            cat "$release_error" >&2
+            exit 1
+          fi
+          tag_error=".runtime/formal-release/tag-preflight.error"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>"$tag_error"; then
+            echo "Git tag already exists; refusing to overwrite." >&2
+            exit 1
+          elif ! is_not_found_error "$tag_error"; then
+            cat "$tag_error" >&2
+            exit 1
+          fi
+
+          existing_count="$(aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$PREFIX/" --max-items 1 --query 'length(Contents)' --output text --endpoint-url "$R2_ENDPOINT")"
+          if [ "$existing_count" != "0" ] && [ "$existing_count" != "None" ]; then
+            echo "Immutable release prefix already contains objects; refusing to overwrite." >&2
+            exit 1
+          fi
+
+          mkdir -p .runtime/formal-release/readback
+          : > "$OWNED_IMMUTABLE_OBJECTS"
+          IMMUTABLE_UPLOAD_STARTED=1
+          for file in .runtime/formal-release/publish/*; do
+            upload_immutable_object "$file"
+          done
+
+          RELEASE_OR_TAG_CLEANUP_REQUIRED=1
+          gh release create "$TAG" \
+            --draft \
+            --target "$RELEASE_COMMIT" \
+            --title "华邦互娱商务系统 1.0（程序 ${{ steps.contract.outputs.version }}）" \
+            --notes-file .runtime/formal-release/publish/RELEASE_NOTES.md \
+            .runtime/formal-release/publish/*
+          test "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true"
+
+          gh release edit "$TAG" --draft=false --latest
+          test "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "false"
+          test "$(gh release view "$TAG" --json tagName --jq '.tagName')" = "$TAG"
+
+          assert_current_unchanged "version.json" .runtime/formal-release/previous/version.json.state .runtime/formal-release/previous/version.json
+          assert_current_unchanged "version-mac.json" .runtime/formal-release/previous/version-mac.json.state .runtime/formal-release/previous/version-mac.json
+          CURRENT_UPDATE_STARTED=1
+          publish_current_manifest "version.json" .runtime/formal-release/previous/version.json.state .runtime/formal-release/version.json
+          publish_current_manifest "version-mac.json" .runtime/formal-release/previous/version-mac.json.state .runtime/formal-release/version-mac.json
+          mkdir -p .runtime/formal-release/current-readback
+          aws s3api get-object --bucket "$R2_BUCKET" --key version.json --if-match "$(cat .runtime/formal-release/published-current/version.json.etag)" --endpoint-url "$R2_ENDPOINT" .runtime/formal-release/current-readback/version.json >/dev/null
+          aws s3api get-object --bucket "$R2_BUCKET" --key version-mac.json --if-match "$(cat .runtime/formal-release/published-current/version-mac.json.etag)" --endpoint-url "$R2_ENDPOINT" .runtime/formal-release/current-readback/version-mac.json >/dev/null
+          cmp .runtime/formal-release/version.json .runtime/formal-release/current-readback/version.json
+          cmp .runtime/formal-release/version-mac.json .runtime/formal-release/current-readback/version-mac.json
+          trap - ERR INT TERM
+
+      - name: Summarize the only formal release
+        shell: bash
+        run: |
+          {
+            echo "## 华邦互娱商务系统 1.0 formal release"
+            echo "- Commit: ${{ inputs.release_commit }}"
+            echo "- Binary version: ${{ steps.contract.outputs.version }}"
+            echo "- Windows and macOS evidence: verified from the same commit"
+            echo "- GitHub Release: created"
+            echo "- R2 immutable assets: uploaded and read back"
+            echo "- R2 current manifests: updated last with rollback protection"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -20,6 +20,7 @@ import type { AssetRecord } from "../generated/bsaigc/AssetRecord";
 import type { AssetSourceSelection } from "../generated/bsaigc/AssetSourceSelection";
 import type { BrainAttachmentPreview } from "../generated/bsaigc/BrainAttachmentPreview";
 import type { BrainDroppedItems } from "../generated/bsaigc/BrainDroppedItems";
+import type { BrainProjectWorkspaceBinding } from "../generated/bsaigc/BrainProjectWorkspaceBinding";
 import type { BrainTurnContext } from "../generated/bsaigc/BrainTurnContext";
 import type { BrainWorkspaceSelection } from "../generated/bsaigc/BrainWorkspaceSelection";
 import type { StageClipboardImageRequest } from "../generated/bsaigc/StageClipboardImageRequest";
@@ -43,6 +44,11 @@ import type { CaseCommandEnvelope } from "../generated/bsaigc/CaseCommandEnvelop
 import type { CaseCommandResponse } from "../generated/bsaigc/CaseCommandResponse";
 import type { CaseDomainEvent } from "../generated/bsaigc/CaseDomainEvent";
 import type { CaseRecord } from "../generated/bsaigc/CaseRecord";
+import type { ReplayEventsRequest } from "../generated/bsaigc/ReplayEventsRequest";
+import type { SharedCaseCommandEnvelope } from "../generated/bsaigc/SharedCaseCommandEnvelope";
+import type { SharedCaseCommandResponse } from "../generated/bsaigc/SharedCaseCommandResponse";
+import type { SharedCaseDomainEvent } from "../generated/bsaigc/SharedCaseDomainEvent";
+import type { SharedCasePublicationRecord } from "../generated/bsaigc/SharedCasePublicationRecord";
 import type { ExecutionBriefCommandEnvelope } from "../generated/bsaigc/ExecutionBriefCommandEnvelope";
 import type { ExecutionBriefCommandResponse } from "../generated/bsaigc/ExecutionBriefCommandResponse";
 import type { ExecutionBriefDomainEvent } from "../generated/bsaigc/ExecutionBriefDomainEvent";
@@ -166,6 +172,13 @@ export interface HostAdapter {
   selectAssetSource(): Promise<AssetSourceSelection | null>;
   selectAssetSources?(): Promise<AssetSourceSelection[]>;
   selectBrainWorkspace?(): Promise<BrainWorkspaceSelection | null>;
+  bindBrainProjectWorkspace?(
+    projectId: string,
+    workspaceToken: string,
+    expectedRevision: number | null,
+  ): Promise<BrainProjectWorkspaceBinding>;
+  listBrainProjectWorkspaces?(): Promise<BrainProjectWorkspaceBinding[]>;
+  unbindBrainProjectWorkspace?(projectId: string, expectedRevision: number): Promise<void>;
   registerBrainDroppedPaths?(paths: string[]): Promise<BrainDroppedItems>;
   stageClipboardImage?(
     request: StageClipboardImageRequest,
@@ -216,6 +229,13 @@ export interface HostAdapter {
     command: BusinessWorkspaceCommandEnvelope,
   ): Promise<BusinessWorkspaceCommandResponse>;
   listBusinessWorkspaces(): Promise<BusinessWorkspaceRecord[]>;
+  executeSharedCaseCommand?(
+    command: SharedCaseCommandEnvelope,
+  ): Promise<SharedCaseCommandResponse>;
+  listAuthorizedSharedCases?(): Promise<SharedCasePublicationRecord[]>;
+  replaySharedCaseEvents?(
+    request: ReplayEventsRequest,
+  ): Promise<SharedCaseDomainEvent[]>;
   listBusinessCustomers(
     request: ListBusinessCustomersRequest,
   ): Promise<BusinessCustomerReceivableSummary[]>;
@@ -225,6 +245,7 @@ export interface HostAdapter {
   authStatus(): Promise<AuthStatus>;
   authInitializeAdmin(credentials: AuthCredentials): Promise<AuthStatus>;
   authLogin(credentials: AuthCredentials): Promise<AuthStatus>;
+  authLoginRemembered(): Promise<AuthStatus>;
   authLogout(): Promise<AuthStatus>;
   authRememberedCredentials(): Promise<AuthCredentials | null>;
   authRememberCredentials(credentials: AuthCredentials): Promise<void>;

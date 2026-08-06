@@ -12,7 +12,7 @@ fn entry() -> Result<keyring::Entry, HostError> {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
-pub(crate) fn load() -> Result<Option<AuthCredentials>, HostError> {
+pub(crate) fn load_for_login() -> Result<Option<AuthCredentials>, HostError> {
     let secret = match entry()?.get_password() {
         Ok(secret) => Zeroizing::new(secret),
         Err(keyring::Error::NoEntry) => return Ok(None),
@@ -43,8 +43,12 @@ pub(crate) fn clear() -> Result<(), HostError> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-pub(crate) fn load() -> Result<Option<AuthCredentials>, HostError> {
+pub(crate) fn load_for_login() -> Result<Option<AuthCredentials>, HostError> {
     Err(unsupported_error())
+}
+
+pub(crate) fn load_public_hint() -> Result<Option<AuthCredentials>, HostError> {
+    load_for_login().map(redact_password)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -66,6 +70,13 @@ fn validate(credentials: &AuthCredentials) -> Result<(), HostError> {
         return Err(HostError::validation("账号或密码过长，无法安全保存"));
     }
     Ok(())
+}
+
+fn redact_password(credentials: Option<AuthCredentials>) -> Option<AuthCredentials> {
+    credentials.map(|credentials| AuthCredentials {
+        username: credentials.username,
+        password: String::new(),
+    })
 }
 
 fn storage_error() -> HostError {
@@ -114,5 +125,18 @@ mod tests {
             password: String::new(),
         })
         .is_err());
+    }
+
+    #[test]
+    fn public_hint_never_exposes_the_remembered_password() {
+        let hint = redact_password(Some(AuthCredentials {
+            username: "member".to_string(),
+            password: "top-secret".to_string(),
+        }))
+        .expect("public hint");
+
+        assert_eq!(hint.username, "member");
+        assert!(hint.password.is_empty());
+        assert!(!serde_json::to_string(&hint).unwrap().contains("top-secret"));
     }
 }

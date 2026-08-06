@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "半山商务工作台",
+  "productName": "华邦互娱商务系统",
   "version": "1.3.4",
   "identifier": "com.banshan.aigc.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "半山商务工作台",
+        "title": "华邦互娱商务系统",
         "width": 1440,
         "height": 920,
         "minWidth": 1120,
@@ -43,10 +43,10 @@
       "resources/third-party/*",
       "resources/r2.config.json"
     ],
-    "publisher": "Banshan AIGC",
-    "copyright": "Copyright © 2026 Banshan AIGC",
-    "shortDescription": "客户、需求、报价、合同审查、请款、验收、回款与归档的一体化本地商务工作台",
-    "longDescription": "半山商务工作台是一套本地优先的 Windows 商务工作系统，覆盖项目与客户资料、需求确认、报价、合同导入与审查、Evidence 人工确认、报告、请款、验收、到账回款和台账归档。",
+    "publisher": "华邦互娱",
+    "copyright": "Copyright © 2026 华邦互娱",
+    "shortDescription": "客户、需求、报价、合同审查、请款、验收、回款与归档的一体化本地商务系统",
+    "longDescription": "华邦互娱商务系统是一套本地优先的跨平台商务系统，覆盖项目与客户资料、需求确认、报价、合同导入与审查、Evidence 人工确认、报告、请款、验收、到账回款和台账归档。",
     "windows": {
       "allowDowngrades": false,
       "nsis": {
@@ -55,7 +55,9 @@
           "SimpChinese"
         ],
         "displayLanguageSelector": false,
-        "startMenuFolder": "半山商务工作台"
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "nsis/installer-hooks.nsh",
+        "startMenuFolder": "华邦互娱商务系统"
       }
     },
     "homepage": null

@@ -17,7 +17,8 @@ use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 const PRODUCT_PROVIDER_ID: &str = "bsaigc";
-const PRODUCT_PROVIDER_NAME: &str = "半山 AIGC";
+const LEGACY_PRODUCT_PROVIDER_NAME: &str = "半山 AIGC";
+const PRODUCT_PROVIDER_NAME: &str = "华邦互娱 AI";
 const PRODUCT_PROVIDER_BASE_URL: &str = "https://bsaigc.dpdns.org/v1";
 const PRODUCT_DEFAULT_MODEL: &str = "gpt-5.6-sol";
 const AGGREGATE_ID: &str = "ai-provider-settings";
@@ -429,7 +430,9 @@ impl AiCredentialService {
             STATE_SCHEMA_VERSION => {
                 let mut state: SecureCredentialState =
                     serde_json::from_value(document).map_err(|_| storage_corrupt_error())?;
-                validate_stored_state(&mut state)?;
+                if validate_stored_state(&mut state)? {
+                    self.write_state(&state)?;
+                }
                 Ok(state)
             }
             LEGACY_STATE_SCHEMA_VERSION => {
@@ -1607,7 +1610,7 @@ fn migrate_legacy_state(
         models: vec![model.clone()],
         default_model: model.clone(),
         enabled: true,
-        connection: untested_connection("已从旧版配置迁移，请重新测试连接"),
+        connection: untested_connection("已从历史配置迁移，请重新测试连接"),
         created_at: now,
         updated_at: now,
     };
@@ -1656,7 +1659,8 @@ fn migrate_legacy_state(
     Ok(state)
 }
 
-fn validate_stored_state(state: &mut SecureCredentialState) -> Result<(), HostError> {
+fn validate_stored_state(state: &mut SecureCredentialState) -> Result<bool, HostError> {
+    let mut changed = false;
     if state.schema_version != STATE_SCHEMA_VERSION
         || state.revision < 0
         || state.providers.len() > MAX_PROVIDERS
@@ -1668,10 +1672,15 @@ fn validate_stored_state(state: &mut SecureCredentialState) -> Result<(), HostEr
         state.default_provider_id = Some(provider.id.clone());
         state.default_model = Some(provider.default_model.clone());
         state.providers.push(provider);
+        changed = true;
     }
 
     let mut ids = HashSet::new();
     for provider in &mut state.providers {
+        if provider.id == PRODUCT_PROVIDER_ID && provider.name == LEGACY_PRODUCT_PROVIDER_NAME {
+            provider.name = PRODUCT_PROVIDER_NAME.to_string();
+            changed = true;
+        }
         validate_provider_id(&provider.id).map_err(|_| storage_corrupt_error())?;
         if !ids.insert(provider.id.clone()) {
             return Err(storage_corrupt_error());
@@ -1722,7 +1731,7 @@ fn validate_stored_state(state: &mut SecureCredentialState) -> Result<(), HostEr
         let excess = state.receipts.len() - MAX_RECEIPTS;
         state.receipts.drain(0..excess);
     }
-    Ok(())
+    Ok(changed)
 }
 
 fn untested_connection(message: &str) -> AiProviderConnectionStatus {

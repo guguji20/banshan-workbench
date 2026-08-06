@@ -1,12 +1,12 @@
 import { useState, type FormEvent } from "react";
 import {
-  Building2,
   Eye,
   EyeOff,
   LoaderCircle,
   LogIn,
   ShieldCheck,
 } from "lucide-react";
+import { PRODUCT_LOGO_PATH, PRODUCT_NAME } from "../brand";
 import type { AuthCredentials } from "../generated/bsaigc/AuthCredentials";
 import type { AuthStatus } from "../generated/bsaigc/AuthStatus";
 import { AUTH_SYNC_LABELS } from "./authText";
@@ -76,9 +76,9 @@ export function AuthGate({
       <form className="auth-gate__card" onSubmit={submit}>
         <div className="auth-gate__brand">
           <span className="auth-gate__logo">
-            <Building2 size={22} />
+            <img src={PRODUCT_LOGO_PATH} alt="" />
           </span>
-          <strong>半山商务工作台</strong>
+          <strong>{PRODUCT_NAME}</strong>
           <small>
             {initializing
               ? "第一次使用：先创建管理员账号，之后由管理员在设置里给同事开账号"

@@ -1,0 +1,231 @@
+.contract-legal-backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(24, 30, 26, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.contract-legal-center {
+  --legal-bg: var(--bw-bg, #f4f5f3);
+  --legal-panel: var(--bw-panel, #ffffff);
+  --legal-line: var(--bw-line, #dfe3dc);
+  --legal-line-strong: var(--bw-line-strong, #cbd1c7);
+  --legal-text: var(--bw-text, #202420);
+  --legal-muted: var(--bw-muted, #687069);
+  --legal-faint: var(--bw-faint, #8b938c);
+  --legal-accent: #f97316;
+  --legal-accent-soft: #fff3e0;
+  --legal-blue: #f97316;
+  --legal-blue-soft: #ffedd5;
+  --legal-warning: #c2410c;
+  --legal-warning-soft: #ffedd5;
+  --legal-danger: var(--bw-danger, #b2433d);
+  --legal-danger-soft: var(--bw-danger-soft, #f8e9e7);
+  --legal-shadow: var(--bw-shadow, 0 10px 28px rgba(33, 42, 35, 0.1));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(1320px, 100%);
+  height: min(900px, calc(100vh - 36px));
+  height: min(900px, calc(100dvh - 36px));
+  overflow: hidden;
+  border: 1px solid var(--legal-line-strong);
+  border-radius: 10px;
+  color: var(--legal-text);
+  background: var(--legal-panel);
+  box-shadow: 0 28px 80px rgba(24, 30, 26, 0.2), var(--legal-shadow);
+}
+.contract-legal-center * { box-sizing: border-box; }
+.contract-legal-center button,
+.contract-legal-center select,
+.contract-legal-center textarea { font: inherit; }
+.contract-legal-center button:disabled,
+.contract-legal-center select:disabled,
+.contract-legal-center textarea:disabled { cursor: not-allowed; opacity: 0.52; }
+
+.contract-legal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--legal-line);
+  background: linear-gradient(135deg, #fffaf0 0%, #fff3e0 100%);
+}
+.contract-legal-header > div:first-child { min-width: 0; }
+.contract-legal-eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--legal-accent); font-size: 13px; font-weight: 750; letter-spacing: 0.06em; }
+.contract-legal-header h2 { margin: 6px 0 4px; font-size: 24px; line-height: 1.25; }
+.contract-legal-header p { margin: 0; color: var(--legal-muted); font-size: 13px; line-height: 1.55; }
+.contract-legal-header__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+
+.contract-legal-center button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--legal-line-strong);
+  border-radius: 6px;
+  color: var(--legal-text);
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.contract-legal-center button:hover:not(:disabled) { border-color: #fdba74; background: #fff7ed; }
+.contract-legal-center button.is-primary { border-color: #f97316; color: #fff; background: linear-gradient(135deg, #f97316 0%, #ffb21c 100%); font-weight: 700; box-shadow: 0 8px 18px rgba(249, 115, 22, .2); }
+.contract-legal-center button.is-primary:hover:not(:disabled) { border-color: #ea580c; background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); }
+.contract-legal-center button.is-icon { width: 34px; padding: 0; }
+.contract-legal-center button:focus-visible,
+.contract-legal-center select:focus-visible,
+.contract-legal-center textarea:focus-visible { outline: 2px solid rgba(249, 115, 22, 0.42); outline-offset: 2px; }
+
+.contract-legal-message { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid #ecd2ce; color: var(--legal-danger); background: var(--legal-danger-soft); font-size: 13px; }
+.contract-legal-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 0; }
+.contract-legal-sidebar { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; border-right: 1px solid var(--legal-line); background: var(--legal-bg); }
+.contract-legal-create { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--legal-line); }
+.contract-legal-create label { color: var(--legal-muted); font-size: 12px; font-weight: 700; }
+.contract-legal-create select { width: 100%; min-height: 38px; padding: 0 9px; border: 1px solid var(--legal-line-strong); border-radius: 6px; color: var(--legal-text); background: #fff; font-size: 13px; }
+.contract-legal-create small { color: var(--legal-faint); font-size: 12px; line-height: 1.5; }
+
+.contract-legal-review-list { display: grid; align-content: start; gap: 5px; min-height: 0; padding: 9px; overflow: auto; scrollbar-gutter: stable; }
+.contract-legal-review-list > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 54px; justify-content: stretch; padding: 9px; text-align: left; }
+.contract-legal-review-list > button > span { display: grid; min-width: 0; gap: 3px; }
+.contract-legal-review-list > button strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.contract-legal-review-list > button small { color: var(--legal-muted); font-size: 12px; }
+.contract-legal-review-list > button em { min-width: 24px; padding: 3px 7px; border-radius: 999px; color: var(--legal-warning); background: var(--legal-warning-soft); font-size: 12px; font-style: normal; text-align: center; }
+.contract-legal-review-list > button.is-active { border-color: #fb923c; background: var(--legal-accent-soft); }
+
+.contract-legal-main { min-width: 0; min-height: 0; overflow: auto; background: var(--legal-panel); scrollbar-gutter: stable; }
+.contract-legal-summary { position: sticky; z-index: 2; top: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px 18px; border-bottom: 1px solid var(--legal-line); background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(8px); }
+.contract-legal-summary h3 { margin: 7px 0 3px; font-size: 17px; }
+.contract-legal-summary p { margin: 0; color: var(--legal-muted); font-size: 12px; }
+.contract-legal-status { display: inline-flex; padding: 4px 8px; border-radius: 999px; color: var(--legal-accent); background: var(--legal-accent-soft); font-size: 12px; font-weight: 750; }
+.contract-legal-status.is-failed { color: var(--legal-danger); background: var(--legal-danger-soft); }
+.contract-legal-status.is-awaitingConfirmation { color: var(--legal-warning); background: var(--legal-warning-soft); }
+.contract-legal-status.is-running { color: var(--legal-blue); background: var(--legal-blue-soft); }
+.contract-legal-status.is-draft,
+.contract-legal-status.is-cancelled { color: var(--legal-muted); background: var(--legal-bg); }
+.contract-legal-summary__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+
+.contract-legal-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 14px 18px 4px; }
+.contract-legal-metrics > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--legal-line); border-radius: 7px; background: #fafbf9; }
+.contract-legal-metrics span { color: var(--legal-muted); font-size: 12px; }
+.contract-legal-metrics strong { font-size: 22px; }
+
+.contract-legal-detail-grid { display: grid; grid-template-columns: minmax(230px, 0.8fr) minmax(340px, 1.2fr); gap: 12px; padding: 12px 18px; }
+.contract-legal-findings,
+.contract-legal-finding-detail { min-width: 0; overflow: hidden; border: 1px solid var(--legal-line); border-radius: 8px; background: #fff; }
+.contract-legal-section-title { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--legal-line); background: #f8f9f7; }
+.contract-legal-section-title span { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.contract-legal-section-title em { flex: 0 0 auto; color: var(--legal-muted); font-size: 12px; font-style: normal; }
+.contract-legal-section-title em.is-critical,
+.contract-legal-section-title em.is-high { color: var(--legal-danger); }
+.contract-legal-section-title em.is-medium { color: var(--legal-warning); }
+.contract-legal-section-title em.is-low { color: var(--legal-blue); }
+.contract-legal-section-title em.is-info { color: var(--legal-muted); }
+
+.contract-legal-finding-list { display: grid; align-content: start; gap: 6px; max-height: 430px; padding: 9px; overflow: auto; }
+.contract-legal-finding-list > button { display: grid; justify-content: stretch; gap: 5px; min-height: 72px; padding: 9px 10px; text-align: left; }
+.contract-legal-finding-list > button > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.contract-legal-finding-list > button span strong { color: var(--legal-warning); font-size: 12px; }
+.contract-legal-finding-list > button span em { color: var(--legal-muted); font-size: 12px; font-style: normal; }
+.contract-legal-finding-list > button b { font-size: 13px; line-height: 1.45; }
+.contract-legal-finding-list > button small { color: var(--legal-faint); font-size: 12px; }
+.contract-legal-finding-list > button.is-critical,
+.contract-legal-finding-list > button.is-high { border-left: 3px solid var(--legal-danger); }
+.contract-legal-finding-list > button.is-medium { border-left: 3px solid var(--legal-warning); }
+.contract-legal-finding-list > button.is-low { border-left: 3px solid var(--legal-blue); }
+.contract-legal-finding-list > button.is-info { border-left: 3px solid var(--legal-line-strong); }
+.contract-legal-finding-list > button.is-active { border-color: #fb923c; background: var(--legal-accent-soft); }
+
+.contract-legal-description { margin: 0; padding: 12px 13px 4px; color: var(--legal-text); font-size: 13px; line-height: 1.65; }
+.contract-legal-recommendation,
+.contract-legal-evidence,
+.contract-legal-decision { margin: 10px 12px 0; padding: 11px; border: 1px solid var(--legal-line); border-radius: 7px; background: #fafbf9; }
+.contract-legal-recommendation > strong,
+.contract-legal-evidence > strong,
+.contract-legal-decision > strong { display: block; margin-bottom: 7px; font-size: 13px; }
+.contract-legal-recommendation p { margin: 0; color: var(--legal-muted); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.contract-legal-evidence blockquote { margin: 0; padding: 9px 10px; border-left: 3px solid #f97316; background: #fff7ed; }
+.contract-legal-evidence blockquote span { color: var(--legal-accent); font-size: 12px; font-weight: 700; }
+.contract-legal-evidence blockquote p { margin: 6px 0; font-size: 13px; line-height: 1.65; }
+.contract-legal-evidence blockquote small { color: var(--legal-muted); font-size: 12px; line-height: 1.5; }
+.contract-legal-evidence > p { margin: 0; color: var(--legal-muted); font-size: 13px; }
+.contract-legal-evidence > p.is-missing { display: flex; align-items: center; gap: 6px; color: var(--legal-warning); }
+.contract-legal-evidence__tabs { display: flex; gap: 6px; margin-bottom: 8px; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; }
+.contract-legal-evidence__tabs > button { flex: 0 0 auto; min-height: 32px; padding: 5px 9px; font-size: 12px; }
+.contract-legal-evidence__tabs > button.is-active { border-color: #fb923c; color: var(--legal-accent); background: var(--legal-accent-soft); }
+.contract-legal-evidence__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.contract-legal-evidence__actions > button { min-height: 34px; font-size: 12px; }
+
+.contract-legal-decision { margin-bottom: 12px; }
+.contract-legal-decision__options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
+.contract-legal-decision__options label { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 9px; border: 1px solid var(--legal-line); border-radius: 6px; background: #fff; font-size: 12px; cursor: pointer; }
+.contract-legal-decision textarea { width: 100%; resize: vertical; min-height: 84px; padding: 9px 10px; border: 1px solid var(--legal-line-strong); border-radius: 6px; outline: 0; color: var(--legal-text); background: #fff; font-size: 13px; line-height: 1.5; }
+.contract-legal-decision textarea:focus { border-color: #f97316; box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14); }
+.contract-legal-decision > button { margin-top: 8px; }
+.contract-legal-decision__saved { display: flex; align-items: flex-start; gap: 8px; color: var(--legal-accent); }
+.contract-legal-decision__saved span { min-width: 0; }
+.contract-legal-decision__saved strong { font-size: 13px; }
+.contract-legal-decision__saved p { margin: 4px 0 0; color: var(--legal-muted); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+
+.contract-legal-report { position: sticky; z-index: 3; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 18px 18px; padding: 12px 14px; border: 1px solid #fed7aa; border-radius: 8px; background: rgba(255, 250, 240, .98); box-shadow: 0 -8px 24px rgba(32, 38, 34, .08); }
+.contract-legal-report > div { display: flex; min-width: 0; align-items: flex-start; gap: 9px; }
+.contract-legal-report span { display: grid; min-width: 0; gap: 3px; }
+.contract-legal-report strong { font-size: 13px; }
+.contract-legal-report small { color: var(--legal-muted); font-size: 12px; line-height: 1.5; }
+
+.contract-legal-empty { display: grid; min-height: 100px; place-items: center; align-content: center; gap: 7px; padding: 18px; color: var(--legal-muted); text-align: center; font-size: 13px; line-height: 1.5; }
+.contract-legal-empty.is-prominent { min-height: 280px; }
+.contract-legal-empty strong { color: var(--legal-text); font-size: 15px; }
+.contract-legal-empty p { max-width: 460px; margin: 0; }
+.contract-legal-center .is-spin { animation: contract-legal-spin 0.9s linear infinite; }
+@keyframes contract-legal-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .contract-legal-center { height: calc(100vh - 24px); }
+  .contract-legal-layout { grid-template-columns: 210px minmax(0, 1fr); }
+  .contract-legal-detail-grid { grid-template-columns: 1fr; }
+  .contract-legal-finding-list { max-height: 260px; }
+  .contract-legal-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .contract-legal-header { gap: 10px; }
+  .contract-legal-summary { display: grid; }
+  .contract-legal-summary__actions { justify-content: flex-start; }
+  .contract-legal-decision__options { grid-template-columns: minmax(0, 1fr); }
+  .contract-legal-report { align-items: flex-start; }
+}
+
+@media (max-width: 620px) {
+  .contract-legal-backdrop { padding: 0; place-items: stretch; }
+  .contract-legal-center { width: 100%; height: 100vh; height: 100dvh; border: 0; border-radius: 0; }
+  .contract-legal-header { padding: 13px 14px; }
+  .contract-legal-header h2 { font-size: 17px; }
+  .contract-legal-header p { display: none; }
+  .contract-legal-header__actions > button:first-child { width: 34px; padding: 0; font-size: 0; }
+  .contract-legal-layout { display: block; overflow: auto; }
+  .contract-legal-sidebar { display: block; border-right: 0; border-bottom: 1px solid var(--legal-line); }
+  .contract-legal-review-list { display: flex; padding: 8px; overflow-x: auto; }
+  .contract-legal-review-list > button { flex: 0 0 210px; }
+  .contract-legal-main { overflow: visible; }
+  .contract-legal-summary { position: static; display: grid; padding: 12px 13px; }
+  .contract-legal-summary__actions { justify-content: flex-start; }
+  .contract-legal-metrics { grid-template-columns: minmax(0, 1fr); padding: 10px 12px 0; }
+  .contract-legal-detail-grid { padding: 10px 12px; }
+  .contract-legal-report { display: grid; margin: 0 12px 14px; }
+  .contract-legal-report > button { width: 100%; }
+  .contract-legal-evidence__actions > button { flex: 1 1 140px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .contract-legal-center *,
+  .contract-legal-center *::before,
+  .contract-legal-center *::after { scroll-behavior: auto !important; transition: none !important; }
+  .contract-legal-center .is-spin { animation-duration: 1.8s; }
+}

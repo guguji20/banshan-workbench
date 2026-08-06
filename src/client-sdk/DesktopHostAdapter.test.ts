@@ -4,6 +4,7 @@ import type { AiCredentialCommandEnvelope } from "../generated/bsaigc/AiCredenti
 import type { BackupDomainEvent } from "../generated/bsaigc/BackupDomainEvent";
 import type { ContractReviewCommandEnvelope } from "../generated/bsaigc/ContractReviewCommandEnvelope";
 import type { ContractReviewDomainEvent } from "../generated/bsaigc/ContractReviewDomainEvent";
+import type { SharedCaseCommandEnvelope } from "../generated/bsaigc/SharedCaseCommandEnvelope";
 import { DesktopHostAdapter } from "./DesktopHostAdapter";
 import {
   BACKUP_EVENT_CHANNEL,
@@ -72,6 +73,20 @@ const backupCommand: BackupCommandEnvelope = {
   deadlineAt: 10_000,
 };
 
+const sharedCaseCommand: SharedCaseCommandEnvelope = {
+  commandType: "sharedCase.publish",
+  commandId: "shared-case-command-1",
+  protocolVersion: BSAIGC_PROTOCOL_VERSION,
+  context,
+  payload: {
+    caseId: "case-1",
+    grants: [{ username: "member", permissions: ["discover", "preview"] }],
+  },
+  idempotencyKey: "shared-case-idempotency-1",
+  expectedRevision: null,
+  deadlineAt: 10_000,
+};
+
 describe("DesktopHostAdapter contract review and backup wiring", () => {
   beforeEach(() => {
     tauriMocks.invoke.mockReset().mockResolvedValue(undefined);
@@ -110,10 +125,14 @@ describe("DesktopHostAdapter contract review and backup wiring", () => {
     await adapter.executeBackupCommand(backupCommand);
     await adapter.listAssetBackups(75);
     await adapter.replayBackupEvents(21, 100);
+    await adapter.executeSharedCaseCommand(sharedCaseCommand);
+    await adapter.listAuthorizedSharedCases();
+    await adapter.replaySharedCaseEvents({ afterSequence: 31, limit: 60 });
     await adapter.getAssetActionCapabilities("asset-report");
     await adapter.openAsset("asset-report");
     await adapter.exportAsset("asset-report");
     await adapter.authRememberedCredentials();
+    await adapter.authLoginRemembered();
     await adapter.authRememberCredentials({ username: "member", password: "secret" });
     await adapter.authForgetCredentials();
     await adapter.brainThreadRename("thread-1", "客户报价讨论");
@@ -132,10 +151,17 @@ describe("DesktopHostAdapter contract review and backup wiring", () => {
       ["execute_backup_command", { command: backupCommand }],
       ["list_asset_backups", { limit: 75 }],
       ["replay_backup_events", { request: { afterSequence: 21, limit: 100 } }],
+      ["execute_shared_case_command", { command: sharedCaseCommand }],
+      ["list_authorized_shared_cases"],
+      [
+        "replay_shared_case_events",
+        { request: { afterSequence: 31, limit: 60 } },
+      ],
       ["get_asset_action_capabilities", { assetId: "asset-report" }],
       ["open_asset", { assetId: "asset-report" }],
       ["export_asset", { assetId: "asset-report" }],
       ["auth_remembered_credentials"],
+      ["auth_login_remembered"],
       [
         "auth_remember_credentials",
         { credentials: { username: "member", password: "secret" } },

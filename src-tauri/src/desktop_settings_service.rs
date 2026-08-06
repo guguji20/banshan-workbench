@@ -39,6 +39,7 @@ pub(crate) struct DesktopSettingsService {
     database_path: PathBuf,
     runtime: RuntimeStatus,
     shells: ShellStatus,
+    r2_runtime: Arc<Mutex<Option<R2RuntimeStatus>>>,
     operation_lock: Arc<Mutex<()>>,
     location_opener: Arc<LocationOpener>,
     update_outcome: Arc<Mutex<Option<UpdateCheckOutcome>>>,
@@ -97,6 +98,12 @@ struct RuntimeStatus {
     build_version: String,
     codex_runtime_version: String,
     build_channel: DesktopBuildChannel,
+}
+
+#[derive(Clone)]
+struct R2RuntimeStatus {
+    ready: bool,
+    degraded_reason: Option<String>,
 }
 
 #[derive(Clone)]
@@ -210,9 +217,21 @@ impl DesktopSettingsService {
             database_path,
             runtime,
             shells,
+            r2_runtime: Arc::new(Mutex::new(None)),
             operation_lock: Arc::new(Mutex::new(())),
             location_opener,
         })
+    }
+
+    pub(crate) fn set_r2_runtime_status(&self, ready: bool, degraded_reason: Option<String>) {
+        let mut runtime = self
+            .r2_runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *runtime = Some(R2RuntimeStatus {
+            ready,
+            degraded_reason,
+        });
     }
 
     pub(crate) fn execute(
@@ -585,6 +604,47 @@ impl DesktopSettingsService {
     }
 
     fn r2_status(&self, pending_items: i64) -> CloudBackupStatus {
+        let runtime = self
+            .r2_runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(runtime) = runtime {
+            if runtime.ready {
+                return CloudBackupStatus {
+                    provider: "cloudflare-r2".to_string(),
+                    mode: CloudBackupMode::AsyncBackupOnly,
+                    configured: true,
+                    ready: true,
+                    state: "ready".to_string(),
+                    message: "R2 backup worker is ready.".to_string(),
+                    pending_items,
+                };
+            }
+
+            let reason = runtime
+                .degraded_reason
+                .unwrap_or_else(|| "R2 backup worker is unavailable.".to_string());
+            let lower_reason = reason.to_ascii_lowercase();
+            let not_configured = lower_reason.contains("not configured");
+            let configured = matches!(self.shells.r2, R2ShellStatus::Configured)
+                || lower_reason.contains("transport configuration")
+                || lower_reason.contains("worker could not start");
+            return CloudBackupStatus {
+                provider: "cloudflare-r2".to_string(),
+                mode: CloudBackupMode::AsyncBackupOnly,
+                configured,
+                ready: false,
+                state: if not_configured {
+                    "notConfigured".to_string()
+                } else {
+                    "degraded".to_string()
+                },
+                message: reason,
+                pending_items,
+            };
+        }
+
         let (configured, state, message) = match self.shells.r2 {
             R2ShellStatus::NotConfigured => (
                 false,
@@ -709,8 +769,8 @@ impl DesktopSettingsService {
                     UpdateCheckOutcome {
                         state: "available".to_string(),
                         message: match notes {
-                            Some(notes) => format!("发现新版本 {latest}:{notes}"),
-                            None => format!("发现新版本 {latest},点下载按钮获取安装包。"),
+                            Some(notes) => format!("发现可用更新 {latest}:{notes}"),
+                            None => format!("发现可用更新 {latest},点下载按钮获取安装包。"),
                         },
                         latest_version: Some(latest),
                         download_url: manifest
@@ -2009,6 +2069,49 @@ mod tests {
         assert!(!status.update.automatic_install_allowed);
         assert_eq!(status.update.state, "idle");
         assert!(status.update.message.contains("检查更新"));
+    }
+
+    #[test]
+    fn injected_r2_worker_status_reports_readiness_and_preserves_pending_items() {
+        let fixture = Fixture::new(ShellStatus::from_lookup(|name| {
+            match name {
+                R2_ENDPOINT_ENV => Some("https://example.r2.cloudflarestorage.com"),
+                R2_BUCKET_ENV => Some("business-backup"),
+                R2_ACCESS_KEY_ENV => Some("access"),
+                R2_SECRET_KEY_ENV => Some("secret"),
+                _ => None,
+            }
+            .map(str::to_string)
+        }));
+        let connection = open_connection(&fixture.service.database_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE asset_backups (state TEXT NOT NULL);\n\
+                 INSERT INTO asset_backups (state) VALUES ('queued');",
+            )
+            .unwrap();
+
+        fixture.service.set_r2_runtime_status(true, None);
+        let status = fixture.service.execute(status_command()).unwrap().snapshot;
+        assert!(status.cloud_backup.configured);
+        assert!(status.cloud_backup.ready);
+        assert_eq!(status.cloud_backup.state, "ready");
+        assert_eq!(status.cloud_backup.pending_items, 1);
+    }
+
+    #[test]
+    fn injected_r2_worker_degradation_reports_runtime_reason() {
+        let fixture = Fixture::new(empty_shells());
+        fixture.service.set_r2_runtime_status(
+            false,
+            Some("R2 backup worker could not start: test failure".to_string()),
+        );
+
+        let status = fixture.service.execute(status_command()).unwrap().snapshot;
+        assert!(status.cloud_backup.configured);
+        assert!(!status.cloud_backup.ready);
+        assert_eq!(status.cloud_backup.state, "degraded");
+        assert!(status.cloud_backup.message.contains("test failure"));
     }
 
     #[test]

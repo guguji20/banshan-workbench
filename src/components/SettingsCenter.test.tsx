@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SettingsCenter,
   formatSettingsBytes,
+  syncProviderBaseUrlDraft,
   type SettingsCenterProps,
 } from "./SettingsCenter";
 
@@ -14,7 +15,7 @@ function createProps(
     providers: [
       {
         id: "provider-banshan",
-        name: "半山 AIGC",
+        name: "华邦互娱 AI",
         providerKind: "openAiCompatible",
         baseUrl: "https://bsaigc.example/v1",
         models: ["gpt-4.1", "gpt-4.1-mini"],
@@ -97,6 +98,24 @@ function createProps(
 }
 
 describe("SettingsCenter", () => {
+  it("captures a pasted Base URL before a deferred state update runs", () => {
+    const queuedUpdates: Array<(current: { baseUrl: string }) => { baseUrl: string }> = [];
+    const input = { value: "https://api.example.com/v1" };
+
+    syncProviderBaseUrlDraft(
+      { currentTarget: input },
+      (update) => {
+        queuedUpdates.push(update);
+      },
+    );
+    input.value = "";
+
+    expect(queuedUpdates).toHaveLength(1);
+    expect(queuedUpdates[0]({ baseUrl: "" }).baseUrl).toBe(
+      "https://api.example.com/v1",
+    );
+  });
+
   it("does not render while closed", () => {
     const html = renderToStaticMarkup(
       <SettingsCenter {...createProps({ open: false })} />,
@@ -113,7 +132,7 @@ describe("SettingsCenter", () => {
     expect(html).toContain("存储与缓存");
     expect(html).toContain("云备份");
     expect(html).toContain("更新与关于");
-    expect(html).toContain("半山 AIGC");
+    expect(html).toContain("华邦互娱 AI");
     expect(html).toContain("https://bsaigc.example/v1");
     expect(html).toContain("gpt-4.1-mini");
     expect(html).toContain("拉取模型");

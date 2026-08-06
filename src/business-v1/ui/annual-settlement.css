@@ -1,0 +1,158 @@
+.bw-annual-settlement-backdrop {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  padding: 24px;
+  background: rgba(24, 30, 26, .42);
+  backdrop-filter: blur(3px);
+}
+.bw-annual-settlement-backdrop > .bw-annual-settlement {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  overflow: hidden;
+  border: 1px solid var(--bw-line, #e1e5e2);
+  border-radius: 16px;
+  background: var(--bw-panel, #fff);
+  box-shadow: 0 24px 70px rgba(20, 27, 23, .2);
+}
+.bw-annual-settlement {
+  --bw-accent: #f97316;
+  --bw-accent-soft: #fff3e0;
+  --bw-warning: #c2410c;
+  --bw-warning-soft: #ffedd5;
+  --bw-settlement-card: var(--bw-panel, #fff);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  color: var(--bw-text, #202622);
+}
+.bw-annual-settlement__header,
+.bw-annual-settlement__heading,
+.bw-annual-settlement__summary,
+.bw-annual-settlement-form > header,
+.bw-annual-settlement-batches > header,
+.bw-annual-settlement-batch > header,
+.bw-annual-settlement-form__footer,
+.bw-annual-settlement-batch > footer,
+.bw-annual-settlement__text-button,
+.bw-annual-settlement__primary-button,
+.bw-annual-settlement__danger-button { display: flex; align-items: center; }
+.bw-annual-settlement__header { justify-content: space-between; gap: 16px; min-width: 0; }
+.bw-annual-settlement__header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.bw-annual-settlement__close { display: grid; flex: 0 0 auto; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid var(--bw-line, #e1e5e2); border-radius: 9px; color: var(--bw-muted, #68716b); background: var(--bw-panel, #fff); cursor: pointer; }
+.bw-annual-settlement__close:hover { color: var(--bw-text, #202622); background: var(--bw-soft, #f8faf8); }
+.bw-annual-settlement__close:disabled { cursor: not-allowed; opacity: .55; }
+.bw-annual-settlement__heading { gap: 10px; min-width: 0; }
+.bw-annual-settlement__heading > div,
+.bw-annual-settlement-form > header > div,
+.bw-annual-settlement-batches > header > div,
+.bw-annual-settlement-batch > header > div { display: grid; min-width: 0; gap: 3px; }
+.bw-annual-settlement__heading strong { font-size: 18px; }
+.bw-annual-settlement__heading small,
+.bw-annual-settlement-form header small,
+.bw-annual-settlement-batches header small,
+.bw-annual-settlement-batch header small { color: var(--bw-muted, #68716b); font-size: 12px; line-height: 1.5; }
+.bw-annual-settlement__icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 10px; color: var(--bw-accent, #f97316); background: var(--bw-accent-soft, #fff3e0); }
+.bw-annual-settlement__summary { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.bw-annual-settlement__summary span { padding: 6px 10px; border: 1px solid #fed7aa; border-radius: 999px; color: #9a3412; background: #fff7ed; font-size: 12px; white-space: nowrap; }
+.bw-annual-settlement__summary b { color: var(--bw-text, #202622); }
+.bw-annual-settlement__message { padding: 10px 12px; border-radius: 9px; color: var(--bw-danger, #b53d3d); background: var(--bw-danger-soft, #fcebea); font-size: 13px; line-height: 1.5; }
+.bw-annual-settlement__layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, .7fr); gap: 14px; min-width: 0; min-height: 0; align-items: start; overflow: auto; padding-right: 3px; scrollbar-gutter: stable; }
+.bw-annual-settlement-form,
+.bw-annual-settlement-batches { display: grid; min-width: 0; gap: 13px; padding: 14px; border: 1px solid var(--bw-line, #e1e5e2); border-radius: 12px; background: var(--bw-settlement-card); }
+.bw-annual-settlement-form > header,
+.bw-annual-settlement-batches > header { justify-content: space-between; gap: 12px; }
+.bw-annual-settlement-form > header strong,
+.bw-annual-settlement-batches > header strong { font-size: 15px; }
+.bw-annual-settlement-form__fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, .45fr); gap: 10px; }
+.bw-annual-settlement-form__fields label,
+.bw-annual-settlement-form__note { display: grid; min-width: 0; gap: 6px; color: var(--bw-muted, #68716b); font-size: 13px; font-weight: 650; }
+.bw-annual-settlement-form input,
+.bw-annual-settlement-form select,
+.bw-annual-settlement-form textarea { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--bw-line-strong, #ccd3ce); border-radius: 8px; color: var(--bw-text, #202622); background: var(--bw-panel, #fff); font: inherit; font-size: 13px; outline: none; }
+.bw-annual-settlement-form input,
+.bw-annual-settlement-form select { min-height: 36px; padding: 7px 9px; }
+.bw-annual-settlement-form textarea { padding: 9px; resize: vertical; line-height: 1.5; }
+.bw-annual-settlement-form input:focus,
+.bw-annual-settlement-form select:focus,
+.bw-annual-settlement-form textarea:focus { border-color: var(--bw-accent, #f97316); box-shadow: 0 0 0 2px var(--bw-accent-soft, #fff3e0); }
+.bw-annual-settlement-deliverables,
+.bw-annual-settlement-batches__list { display: grid; min-width: 0; gap: 9px; }
+.bw-annual-settlement-deliverable { display: grid; grid-template-columns: minmax(160px, .8fr) minmax(280px, 1.25fr) minmax(150px, .45fr); gap: 12px; align-items: center; min-width: 0; padding: 11px; border: 1px solid var(--bw-line, #e1e5e2); border-radius: 10px; background: var(--bw-soft, #f8faf8); }
+.bw-annual-settlement-deliverable.is-selected { border-color: var(--bw-accent, #f97316); background: var(--bw-accent-soft, #fff3e0); }
+.bw-annual-settlement-deliverable__choice { display: flex; align-items: flex-start; gap: 8px; min-width: 0; cursor: pointer; }
+.bw-annual-settlement-deliverable__choice input { flex: 0 0 auto; width: 15px; min-height: 15px; margin-top: 2px; accent-color: var(--bw-accent, #f97316); }
+.bw-annual-settlement-deliverable__choice > span { display: grid; min-width: 0; gap: 3px; }
+.bw-annual-settlement-deliverable__choice strong { font-size: 13px; overflow-wrap: anywhere; }
+.bw-annual-settlement-deliverable__choice small { color: var(--bw-muted, #68716b); font-size: 12px; }
+.bw-annual-settlement-deliverable__metrics { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.bw-annual-settlement-deliverable__metrics span { padding: 5px 7px; border-radius: 6px; color: var(--bw-muted, #68716b); background: var(--bw-panel, #fff); font-size: 12px; line-height: 1.4; }
+.bw-annual-settlement-deliverable__metrics b { color: var(--bw-text, #202622); }
+.bw-annual-settlement-deliverable__quantity { display: grid; grid-template-columns: 1fr auto; gap: 4px 6px; align-items: center; min-width: 0; color: var(--bw-muted, #68716b); font-size: 12px; }
+.bw-annual-settlement-deliverable__quantity > span { grid-column: 1 / -1; }
+.bw-annual-settlement-deliverable__quantity input { min-height: 32px; padding: 5px 7px; }
+.bw-annual-settlement-deliverable__quantity em { color: var(--bw-muted, #68716b); font-style: normal; }
+.bw-annual-settlement-form__footer { position: sticky; z-index: 2; bottom: -14px; justify-content: space-between; gap: 10px; margin: 0 -14px -14px; padding: 12px 14px 14px; border-top: 1px solid var(--bw-line, #e1e5e2); background: rgba(255, 255, 255, .98); box-shadow: 0 -8px 24px rgba(32, 38, 34, .06); }
+.bw-annual-settlement-form__footer small { color: var(--bw-muted, #68716b); font-size: 12px; }
+.bw-annual-settlement__text-button,
+.bw-annual-settlement__primary-button,
+.bw-annual-settlement__danger-button { justify-content: center; gap: 6px; min-height: 36px; padding: 7px 12px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.bw-annual-settlement__text-button { border: 1px solid var(--bw-line, #e1e5e2); color: var(--bw-muted, #68716b); background: transparent; }
+.bw-annual-settlement__primary-button { border: 1px solid #f97316; color: #fff; background: linear-gradient(135deg, #f97316 0%, #ffb21c 100%); box-shadow: 0 8px 18px rgba(249, 115, 22, .2); }
+.bw-annual-settlement__primary-button:hover:not(:disabled) { border-color: #ea580c; background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); }
+.bw-annual-settlement__danger-button { border: 1px solid var(--bw-danger, #b53d3d); color: var(--bw-danger, #b53d3d); background: transparent; }
+.bw-annual-settlement__text-button:disabled,
+.bw-annual-settlement__primary-button:disabled,
+.bw-annual-settlement__danger-button:disabled { cursor: not-allowed; opacity: .55; }
+.bw-annual-settlement-batches__list { max-height: none; overflow: visible; }
+.bw-annual-settlement-batch { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--bw-line, #e1e5e2); border-radius: 10px; background: var(--bw-soft, #f8faf8); }
+.bw-annual-settlement-batch.is-voided { opacity: .68; }
+.bw-annual-settlement-batch > header { justify-content: space-between; gap: 10px; align-items: flex-start; }
+.bw-annual-settlement-batch > header strong { font-size: 14px; }
+.bw-annual-settlement-status { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; color: var(--bw-warning, #9a641c); background: var(--bw-warning-soft, #fff3d6); font-size: 12px; font-weight: 700; }
+.bw-annual-settlement-status.is-confirmed { color: var(--bw-accent, #f97316); background: var(--bw-accent-soft, #fff3e0); }
+.bw-annual-settlement-status.is-voided { color: var(--bw-danger, #b53d3d); background: var(--bw-danger-soft, #fcebea); }
+.bw-annual-settlement-batch__lines { display: grid; gap: 6px; }
+.bw-annual-settlement-batch__lines > div { display: flex; justify-content: space-between; gap: 10px; min-width: 0; padding-top: 6px; border-top: 1px solid var(--bw-line, #e1e5e2); font-size: 12px; }
+.bw-annual-settlement-batch__lines span { display: grid; min-width: 0; gap: 2px; }
+.bw-annual-settlement-batch__lines small { color: var(--bw-muted, #68716b); font-size: 12px; }
+.bw-annual-settlement-batch__lines b { flex: 0 0 auto; }
+.bw-annual-settlement-batch p { margin: 0; color: var(--bw-muted, #68716b); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.bw-annual-settlement-batch > footer { justify-content: flex-end; gap: 7px; }
+.bw-annual-settlement__empty { padding: 24px 12px; border: 1px dashed #fdba74; border-radius: 9px; color: var(--bw-muted, #68716b); background: #fffaf0; text-align: center; font-size: 13px; line-height: 1.6; }
+@media (max-width: 980px) {
+  .bw-annual-settlement__layout { grid-template-columns: minmax(0, 1fr); }
+  .bw-annual-settlement-batches__list { max-height: none; overflow: visible; }
+}
+@media (max-width: 700px) {
+  .bw-annual-settlement-backdrop { padding: 10px; }
+  .bw-annual-settlement-backdrop > .bw-annual-settlement { max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); border-radius: 12px; }
+  .bw-annual-settlement { gap: 10px; padding: 10px; }
+  .bw-annual-settlement__header { align-items: flex-start; }
+  .bw-annual-settlement__summary { justify-content: flex-start; }
+  .bw-annual-settlement-form__fields { grid-template-columns: minmax(0, 1fr); }
+  .bw-annual-settlement-deliverable { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .bw-annual-settlement-backdrop { padding: 0; }
+  .bw-annual-settlement-backdrop > .bw-annual-settlement { min-height: 100%; max-height: none; border: 0; border-radius: 0; }
+  .bw-annual-settlement__header { display: grid; }
+  .bw-annual-settlement__header-actions { width: 100%; justify-content: space-between; }
+  .bw-annual-settlement__summary { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .bw-annual-settlement__summary span { text-align: center; }
+  .bw-annual-settlement-form,
+  .bw-annual-settlement-batches { padding: 11px; border-radius: 10px; }
+  .bw-annual-settlement-form > header { align-items: flex-start; }
+  .bw-annual-settlement-form__footer { align-items: stretch; flex-direction: column; }
+  .bw-annual-settlement__primary-button { width: 100%; }
+  .bw-annual-settlement-batch > footer { flex-wrap: wrap; }
+  .bw-annual-settlement-batch > footer button { flex: 1 1 110px; }
+}

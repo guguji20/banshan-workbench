@@ -93,7 +93,14 @@ function Invoke-Git([string[]]$Arguments) {
 
 function Test-SyntheticValue([string]$Value) {
   $lower = $Value.ToLowerInvariant()
-  return $lower -match '(test|fake|dummy|example|sample|placeholder|redacted|changeme|replace-me|not-a-real|should-not|provider-secret|legacy-secret)' -or $lower -match '^sk-(?:[a-z]+-){1,6}(?:secret|survive|only)$'
+  return $lower -match '(test|fake|dummy|example|sample|synthetic|fixture|placeholder|redacted|changeme|replace-me|not-a-real|should-not|provider-secret|legacy-secret)' -or $lower -match '^sk-(?:[a-z]+-){1,6}(?:secret|survive|only)$'
+}
+
+function Test-SyntheticPath([string]$Value) {
+  $normalized = $Value.Replace('/', '\').ToLowerInvariant()
+  if ($normalized -match '(?:\$\{|%[a-z_][a-z0-9_]*%|<[^>]+>|\{\{[^}]+\}\})') { return $true }
+  return $normalized -match '^(?:[a-z]:\\|\\\\\?\\[a-z]:\\)users\\(?:public|default|default user|all users)(?:\\|$)' -or
+    $normalized -match '^\x5c(?:users|home)\x5c(?:public|default|default user|all users)(?:\x5c|$)'
 }
 
 function Test-HighEntropyValue([string]$Value) {
@@ -133,11 +140,23 @@ function Find-Secrets([string]$RelativePath, [byte[]]$Bytes) {
     @{ Name = 'github-token'; Pattern = '(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{20,}' },
     @{ Name = 'aws-access-key'; Pattern = '(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])' },
     @{ Name = 'google-api-key'; Pattern = '(?<![A-Za-z0-9_])AIza[0-9A-Za-z_-]{30,}' },
-    @{ Name = 'slack-token'; Pattern = '(?<![A-Za-z0-9_])xox[baprs]-[A-Za-z0-9-]{10,}' }
+    @{ Name = 'slack-token'; Pattern = '(?<![A-Za-z0-9_])xox[baprs]-[A-Za-z0-9-]{10,}' },
+    @{ Name = 'baidu-pan-share-url'; Pattern = '(?i)https?://(?:pan|yun)\.baidu\.com/(?:s/[A-Za-z0-9_-]{6,}|share/init\?surl=[A-Za-z0-9_-]{6,})'; AllowSynthetic = $false },
+    @{ Name = 'baidu-pan-pickup-code'; Pattern = '(?i)(?:\u63d0\u53d6\u7801|\u62bd\u53d6\u7801)\s*[:\uFF1A=]\s*[A-Za-z0-9]{4}(?![A-Za-z0-9_-])'; AllowSynthetic = $false },
+    @{ Name = 'windows-user-home-path'; Pattern = '(?i)(?<![A-Za-z0-9_])(?:[A-Z]:\x5c|\x5c\x5c\x3f\x5c[A-Z]:\x5c)Users\x5c[^\x5c/\s"''()]+(?:\x5c[^\x5c/\s"''()]+)+'; PathRule = $true },
+    @{ Name = 'unix-user-home-path'; Pattern = '(?i)(?<![A-Za-z0-9_])/(?:Users|home)/[^/\s"''()]+(?:/[^/\s"''()]+)+'; PathRule = $true }
   )
+  if ($RelativePath -ne 'scripts/create-source-snapshot.ps1' -and ($RelativePath -eq 'git-diff.binary.patch' -or $RelativePath -match '^(?:src|src-tauri/src|scripts)/')) {
+    $rules += @{
+      Name = 'embedded-business-material'
+      Pattern = '(?im)^.*(?:\u901a\u8fc7\u7f51\u76d8\u5206\u4eab\u7684\u6587\u4ef6|(?:\u771f\u5b9e\u9700\u6c42|\u9a8c\u6536\u8d44\u6599\u7d20\u6750|\u4ee5\u5f80\u9a8c\u6536\u8d44\u6599|\u8bf7\u6b3e\u8d44\u6599)[^\r\n]*(?:\.docx?|\.xlsx?|\.pdf|\.png|\.jpe?g|\.mp4|\.mov)|\[\u89c6\u9891\u5185\u5bb9\].*\[\u542b\u7a0e\u4ef7\].*\.(?:mp4|mov)).*$'
+    }
+  }
   foreach ($rule in $rules) {
     foreach ($match in [regex]::Matches($text, $rule.Pattern)) {
-      if (-not (Test-SyntheticValue $match.Value)) {
+      $allowSynthetic = -not $rule.ContainsKey('AllowSynthetic') -or [bool]$rule.AllowSynthetic
+      $synthetic = if ($rule.ContainsKey('PathRule') -and $rule.PathRule) { Test-SyntheticPath $match.Value } else { Test-SyntheticValue $match.Value }
+      if (-not $allowSynthetic -or -not $synthetic) {
         $findings.Add([pscustomobject][ordered]@{ path = $RelativePath; line = Get-LineNumber $text $match.Index; rule = $rule.Name })
       }
     }
@@ -152,10 +171,40 @@ function Find-Secrets([string]$RelativePath, [byte[]]$Bytes) {
   return $findings.ToArray()
 }
 
+function Protect-GitDiff([string]$Text) {
+  $patterns = @(
+    '(?s)-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE\s+KEY-----',
+    '(?<![A-Za-z0-9_])sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}',
+    '(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{20,}',
+    '(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])',
+    '(?<![A-Za-z0-9_])AIza[0-9A-Za-z_-]{30,}',
+    '(?<![A-Za-z0-9_])xox[baprs]-[A-Za-z0-9-]{10,}',
+    '(?i)https?://(?:pan|yun)\.baidu\.com/(?:s/[A-Za-z0-9_-]{6,}|share/init\?surl=[A-Za-z0-9_-]{6,})',
+    '(?i)(?:\u63d0\u53d6\u7801|\u62bd\u53d6\u7801)\s*[:\uFF1A=]\s*[A-Za-z0-9]{4}(?![A-Za-z0-9_-])',
+    '(?i)(?<![A-Za-z0-9_])(?:[A-Z]:\x5c|\x5c\x5c\x3f\x5c[A-Z]:\x5c)Users\x5c[^\x5c/\s"''()]+(?:\x5c[^\x5c/\s"''()]+)+',
+    '(?i)(?<![A-Za-z0-9_])/(?:Users|home)/[^/\s"''()]+(?:/[^/\s"''()]+)+',
+    '(?im)(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?key|password)\s*["'']?\s*[:=]\s*(?:"[^"\r\n]{12,}"|''[^''\r\n]{12,}'')'
+  )
+  $protected = $Text
+  $redactionCount = 0
+  foreach ($pattern in $patterns) {
+    $regex = New-Object Text.RegularExpressions.Regex($pattern)
+    $matches = $regex.Matches($protected)
+    if ($matches.Count -gt 0) {
+      $redactionCount += $matches.Count
+      $protected = $regex.Replace($protected, '[REDACTED_DIFF_VALUE]')
+    }
+  }
+  return [pscustomobject]@{ text = $protected; redactionCount = $redactionCount }
+}
+
 function Get-SourceInventory {
-  $excludedRoots = @('.git', 'node_modules', 'dist', 'src-tauri/target', 'release', '.runtime', 'upstream', '_upload')
+  $excludedRoots = @('.git', 'node_modules', 'dist', 'src-tauri/target', 'release', '.runtime', 'docs/visual', 'upstream', '_upload')
   $compiledExtensions = @('.exe', '.dll', '.pdb', '.lib', '.so', '.dylib', '.node', '.wasm', '.msi')
   $archiveExtensions = @('.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz')
+  $businessBinaryExtensions = @('.doc', '.docx', '.xls', '.xlsx', '.pdf', '.ppt', '.pptx', '.mp4', '.mov', '.avi', '.mkv')
+  $imageExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff')
+  $trustedImageRoots = @('public', 'src/assets', 'src-tauri/icons')
   $threshold = [int64]$LargeBinaryThresholdMiB * 1MB
   $included = New-Object Collections.Generic.List[object]
   $excluded = New-Object Collections.Generic.List[object]
@@ -202,6 +251,23 @@ function Get-SourceInventory {
       $extension = $file.Extension.ToLowerInvariant()
       $bytes = [IO.File]::ReadAllBytes($file.FullName)
       $binary = Test-ProbablyBinary $bytes
+      if ($extension -in $businessBinaryExtensions) {
+        $findings.Add([pscustomobject][ordered]@{ path = $relative; line = 0; rule = 'business-binary-material' })
+        continue
+      }
+      if ($extension -in $imageExtensions) {
+        $trustedImage = $false
+        foreach ($root in $trustedImageRoots) {
+          if ($relative.StartsWith($root + '/', [StringComparison]::OrdinalIgnoreCase)) {
+            $trustedImage = $true
+            break
+          }
+        }
+        if (-not $trustedImage) {
+          $findings.Add([pscustomobject][ordered]@{ path = $relative; line = 0; rule = 'untrusted-image-material' })
+          continue
+        }
+      }
       $excludeReason = $null
       if ($extension -in $compiledExtensions) { $excludeReason = 'compiled-binary' }
       elseif ($extension -in $archiveExtensions) { $excludeReason = 'archive-binary' }
@@ -236,22 +302,26 @@ function New-DeterministicZip([object[]]$Files, [string]$ZipPath) {
 }
 
 function Test-Zip([object[]]$Files, [string]$ZipPath) {
+  Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $expected = @{}
   foreach ($file in $Files) { $expected[$file.relativePath] = $file }
-  $archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+  $stream = [IO.File]::Open($ZipPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
   try {
-    if ($archive.Entries.Count -ne $Files.Count) { throw 'ZIP entry count mismatch.' }
-    foreach ($entry in $archive.Entries) {
-      if (-not $expected.ContainsKey($entry.FullName)) { throw "Unexpected ZIP entry: $($entry.FullName)" }
-      $file = $expected[$entry.FullName]
-      if ($entry.Length -ne $file.size) { throw "ZIP size mismatch: $($entry.FullName)" }
-      $sha = [Security.Cryptography.SHA256]::Create()
-      $entryStream = $entry.Open()
-      try { $actual = ([BitConverter]::ToString($sha.ComputeHash($entryStream))).Replace('-', '').ToLowerInvariant() } finally { $entryStream.Dispose(); $sha.Dispose() }
-      if ($actual -ne $file.sha256) { throw "ZIP hash mismatch: $($entry.FullName)" }
-    }
-  } finally { $archive.Dispose() }
+    $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Read, $false, $Utf8NoBom)
+    try {
+      if ($archive.Entries.Count -ne $Files.Count) { throw 'ZIP entry count mismatch.' }
+      foreach ($entry in $archive.Entries) {
+        if (-not $expected.ContainsKey($entry.FullName)) { throw "Unexpected ZIP entry: $($entry.FullName)" }
+        $file = $expected[$entry.FullName]
+        if ($entry.Length -ne $file.size) { throw "ZIP size mismatch: $($entry.FullName)" }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        $entryStream = $entry.Open()
+        try { $actual = ([BitConverter]::ToString($sha.ComputeHash($entryStream))).Replace('-', '').ToLowerInvariant() } finally { $entryStream.Dispose(); $sha.Dispose() }
+        if ($actual -ne $file.sha256) { throw "ZIP hash mismatch: $($entry.FullName)" }
+      }
+    } finally { $archive.Dispose() }
+  } finally { $stream.Dispose() }
 }
 
 function Remove-StagingSafely {
@@ -298,11 +368,18 @@ try {
   $untrackedIncluded = @($untrackedSet.Keys | Where-Object { $includedPaths.ContainsKey($_) } | Sort-Object)
   $untrackedText = if ($untrackedIncluded.Count -gt 0) { ($untrackedIncluded -join "`n") + "`n" } else { '' }
 
-  $pathspecs = @('.', ':(exclude).git/**', ':(exclude)node_modules/**', ':(exclude)dist/**', ':(exclude)src-tauri/target/**', ':(exclude)release/**', ':(exclude).runtime/**', ':(exclude)upstream/**', ':(exclude)_upload/**')
+  $pathspecs = @('.', ':(exclude).git/**', ':(exclude)node_modules/**', ':(exclude)dist/**', ':(exclude)src-tauri/target/**', ':(exclude)release/**', ':(exclude).runtime/**', ':(exclude)docs/visual/**', ':(exclude)upstream/**', ':(exclude)_upload/**')
   foreach ($excluded in $inventory.excluded) {
-    if ($excluded.kind -eq 'file') { $pathspecs += (':(exclude)' + $excluded.relativePath) }
+    if ($excluded.kind -eq 'file') {
+      $pathspecs += (':(exclude)' + $excluded.relativePath)
+    } elseif ($excluded.kind -eq 'directory') {
+      $pathspecs += (':(exclude)' + $excluded.relativePath)
+      $pathspecs += (':(exclude)' + $excluded.relativePath + '/**')
+    }
   }
-  $patch = Invoke-Git (@('diff', '--binary', '--full-index', '--no-ext-diff', 'HEAD', '--') + $pathspecs)
+  $rawPatch = Invoke-Git (@('diff', '--binary', '--full-index', '--no-ext-diff', 'HEAD', '--') + $pathspecs)
+  $protectedPatch = Protect-GitDiff $rawPatch
+  $patch = $protectedPatch.text
   $patchFindings = @(Find-Secrets 'git-diff.binary.patch' $Utf8NoBom.GetBytes($patch))
   if ($patchFindings.Count -gt 0) {
     Write-Host 'Sensitive material detected in Git diff. Snapshot blocked. Values are intentionally not printed.' -ForegroundColor Red
@@ -323,6 +400,7 @@ try {
   Write-Host "Included files: $($inventory.included.Count)"
   Write-Host "Excluded entries: $($inventory.excluded.Count)"
   Write-Host 'Sensitive findings: 0'
+  Write-Host "Git diff redactions: $($protectedPatch.redactionCount)"
   Write-Host "FINAL_SNAPSHOT_SHA256: $finalSha"
 
   if ($DryRun) {
@@ -334,7 +412,7 @@ try {
 
   $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
   $shortHead = $head.Substring(0, [Math]::Min(12, $head.Length))
-  $baseName = "bsaigc-desktop-source-$Version-$shortHead-$timestamp"
+  $baseName = "huabang-business-system-source-$Version-$shortHead-$timestamp"
   $zipName = "$baseName.zip"
   $zipPath = Join-Path $StagingRoot $zipName
   New-DeterministicZip $inventory.included $zipPath
@@ -355,7 +433,7 @@ try {
   }
   $manifest = [ordered]@{
     schemaVersion = 1
-    product = 'BSAIGC Desktop'
+    product = '华邦互娱商务系统'
     version = $Version
     createdAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     repository = [ordered]@{ branch = $branch; head = $head; commitTime = $commitTime; dirty = -not [string]::IsNullOrWhiteSpace($status); statusSha256 = $statusSha }
@@ -370,7 +448,7 @@ try {
       untrackedIncludedCount = $untrackedIncluded.Count
       largeBinaryThresholdMiB = $LargeBinaryThresholdMiB
     }
-    security = [ordered]@{ blockedFindings = 0; result = 'passed'; valuesPrinted = $false }
+    security = [ordered]@{ blockedFindings = 0; gitDiffRedactions = $protectedPatch.redactionCount; result = 'passed'; valuesPrinted = $false }
     excluded = $inventory.excluded
     files = @($manifestFiles)
   }

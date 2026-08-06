@@ -1,105 +1,391 @@
-# 云端自动打包 Windows 安装包，打完自动上传到你的 R2 发布桶。
-# 触发方式：GitHub 网页上手动点「Run workflow」，或推送 v 开头的标签。
-name: 打包 Windows 安装包
+name: Windows 1.0 validation evidence
 
 on:
-  workflow_dispatch: {}
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   R2_ENDPOINT: https://0f98b7eaabb1ca07dadca32e7e34ddb0.r2.cloudflarestorage.com
   PUBLIC_BASE: https://pub-ec88f35bbc9845e098c534da6f88fdfc.r2.dev
-  AWS_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: auto
+  AWS_EC2_METADATA_DISABLED: true
+  CARGO_BUILD_JOBS: 1
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_INCREMENTAL: 0
 
 jobs:
-  build-windows:
+  build-windows-validation-evidence:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
-      - name: 拉取代码
+      - name: Checkout without persisted credentials
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: 准备 pnpm
+      - name: Verify product version and commit contract
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageVersion = [string]((Get-Content -LiteralPath "package.json" -Raw -Encoding UTF8 | ConvertFrom-Json).version)
+          $tauriVersion = [string]((Get-Content -LiteralPath "src-tauri/tauri.conf.json" -Raw -Encoding UTF8 | ConvertFrom-Json).version)
+          $cargoVersion = $null
+          $insidePackage = $false
+          foreach ($line in Get-Content -LiteralPath "src-tauri/Cargo.toml" -Encoding UTF8) {
+            if ($line -match '^\s*\[(.+)\]\s*$') {
+              $insidePackage = $Matches[1] -ceq "package"
+              continue
+            }
+            if ($insidePackage -and $line -match '^\s*version\s*=\s*"([^"]+)"\s*$') {
+              $cargoVersion = $Matches[1]
+              break
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($cargoVersion)) { throw "Cargo package version is missing." }
+          $distinctVersions = @($packageVersion, $tauriVersion, $cargoVersion | Sort-Object -Unique)
+          if ($distinctVersions.Count -ne 1) {
+            throw "Version mismatch: package.json=$packageVersion, tauri.conf.json=$tauriVersion, Cargo.toml=$cargoVersion"
+          }
+          $gitHead = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Unable to resolve checkout commit." }
+          if ($gitHead -cne $env:GITHUB_SHA) {
+            throw "Checkout commit mismatch: HEAD=$gitHead, github.sha=$env:GITHUB_SHA"
+          }
+          "version=$packageVersion" >> $env:GITHUB_OUTPUT
+          "git_commit=$env:GITHUB_SHA" >> $env:GITHUB_OUTPUT
+          "Validated product version $packageVersion at commit $env:GITHUB_SHA." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Prepare pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - name: 准备 Node
+      - name: Prepare Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: 准备 Rust
+      - name: Prepare Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 从 R2 下载 Codex 运行时（大文件用 aws 分片，不放 GitHub）
+      - name: Download Codex runtime with scoped credentials
+        shell: pwsh
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}
         run: |
           aws configure set default.s3.addressing_style path
           aws s3 cp s3://banshan-releases/runtime/codex.exe src-tauri/resources/codex-runtime/codex.exe --endpoint-url $env:R2_ENDPOINT
 
-      - name: 安装前端依赖
+      - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: 准备运行时 R2 配置
+      - name: Write public-only runtime configuration
         shell: pwsh
         run: |
           $config = [ordered]@{
             accountId = "0f98b7eaabb1ca07dadca32e7e34ddb0"
             bucket = "banshan-backup"
-            accessKeyId = $env:AWS_ACCESS_KEY_ID
-            secretAccessKey = $env:AWS_SECRET_ACCESS_KEY
+            accessKeyId = ""
+            secretAccessKey = ""
             endpoint = $env:R2_ENDPOINT
             updateManifestUrl = "$env:PUBLIC_BASE/version.json"
           }
           $config | ConvertTo-Json | Set-Content -Encoding UTF8 src-tauri/resources/r2.config.json
 
-      - name: 校验内置 Skills 与 Codex 运行时
+      - name: Validate source and sidecar security
         shell: pwsh
         run: |
           pnpm skills:validate
           pnpm codex:sidecar:verify
+          git diff --check
 
-      - name: 打包安装包
-        env:
-          BSAIGC_INTERNAL_API_KEY: ${{ secrets.BSAIGC_INTERNAL_API_KEY }}
-        run: pnpm tauri build --bundles nsis
 
-      - name: 读取版本号
-        id: ver
-        shell: pwsh
-        run: echo "version=$((Get-Content package.json -Raw | ConvertFrom-Json).version)" >> $env:GITHUB_OUTPUT
-
-      - name: 安装、启动与卸载验收
+      - name: Build unsigned Windows validation installer
+        id: unsigned
         shell: pwsh
         run: |
-          $ver = "${{ steps.ver.outputs.version }}"
-          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          $ErrorActionPreference = "Stop"
+          pnpm release:verify
+          if ($LASTEXITCODE -ne 0) { throw "Product validation failed with exit code $LASTEXITCODE." }
+          pnpm tauri build --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw "Windows NSIS build failed with exit code $LASTEXITCODE." }
+
+          $ver = "${{ steps.version.outputs.version }}"
+          $tauriConfig = Get-Content -LiteralPath "src-tauri/tauri.conf.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          $installerName = "$([string]$tauriConfig.productName)_${ver}_x64-setup.exe"
+          $installerPath = Join-Path "src-tauri/target/release/bundle/nsis" $installerName
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw "Expected installer not found: $installerPath" }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+            throw "Pre-signing installer must be NotSigned, got $($signature.Status)."
+          }
+          $installer = Get-Item -LiteralPath $installerPath
+          $sha256 = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "installer_path=$($installer.FullName -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+          "installer_name=$installerName" >> $env:GITHUB_OUTPUT
+          "installer_size=$($installer.Length)" >> $env:GITHUB_OUTPUT
+          "installer_sha256=$sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Run Windows installer lifecycle acceptance
+        id: acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = "${{ steps.version.outputs.version }}"
+          $runId = "github-windows-validation-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           ./scripts/invoke-nsis-release-acceptance.ps1 `
-            -InstallerPath $exe.FullName `
+            -InstallerPath "${{ steps.unsigned.outputs.installer_path }}" `
             -Version $ver `
-            -RunId "github-release-$ver" `
-            -ExpectEmbeddedPreviewCredential
+            -RunId $runId
+          if ($LASTEXITCODE -ne 0) { throw "Windows lifecycle acceptance failed with exit code $LASTEXITCODE." }
 
-      - name: 上传安装包与版本信息到 R2
+          $summaryPath = Join-Path ".runtime/nsis-acceptance" "$runId/acceptance-summary.json"
+          if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) { throw "Acceptance summary is missing." }
+          $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ([string]$summary.status -cne "passed" -or [bool]$summary.dryRun) { throw "Acceptance did not report a real passed run." }
+          if ([string]$summary.version -cne $ver) { throw "Acceptance version mismatch." }
+          if ([string]$summary.installer.sha256 -cne "${{ steps.unsigned.outputs.installer_sha256 }}") { throw "Acceptance installer SHA-256 mismatch." }
+          if ([string]$summary.installer.authenticode -cne "NotSigned") { throw "Acceptance must exercise the measured pre-signing installer." }
+          $summaryFile = Get-Item -LiteralPath $summaryPath
+          "summary_path=$($summaryFile.FullName -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+          "summary_sha256=$((Get-FileHash -LiteralPath $summaryPath -Algorithm SHA256).Hash.ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "status=passed" >> $env:GITHUB_OUTPUT
+
+      - name: Sign, verify, and seal Windows validation evidence
+        id: evidence
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGNING_CERTIFICATE_SHA1: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_SHA1 }}
+          WINDOWS_SIGNING_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGNING_TIMESTAMP_URL }}
         run: |
-          aws configure set default.s3.addressing_style path
-          $ver = "${{ steps.ver.outputs.version }}"
-          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
-          $name = "banshan-workbench-$ver-setup.exe"
-          aws s3 cp $exe.FullName "s3://banshan-releases/$name" --endpoint-url $env:R2_ENDPOINT
-          @{ version = $ver; url = "$env:PUBLIC_BASE/$name"; notes = "版本 $ver" } | ConvertTo-Json | Set-Content -Encoding UTF8 version.json
-          aws s3 cp version.json "s3://banshan-releases/version.json" --endpoint-url $env:R2_ENDPOINT --content-type application/json
+          $ErrorActionPreference = "Stop"
+          foreach ($requiredName in @("WINDOWS_SIGNING_CERTIFICATE_BASE64", "WINDOWS_SIGNING_CERTIFICATE_PASSWORD", "WINDOWS_SIGNING_CERTIFICATE_SHA1")) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($requiredName))) {
+              throw "Required Windows signing secret is missing: $requiredName"
+            }
+          }
 
-      - name: 留存安装包（可在 GitHub 网页下载）
+          $ver = "${{ steps.version.outputs.version }}"
+          $shortCommit = $env:GITHUB_SHA.Substring(0, 12)
+          $evidenceRoot = Join-Path ".runtime/windows-release-gate-evidence" "$ver/$shortCommit"
+          New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
+
+          $snapshotOutput = Join-Path $env:RUNNER_TEMP "bsaigc-source-snapshot-$([Guid]::NewGuid().ToString('N'))"
+          & ./scripts/create-source-snapshot.ps1 -Version $ver -OutputDirectory $snapshotOutput
+          if ($LASTEXITCODE -ne 0) { throw "Source snapshot security gate failed with exit code $LASTEXITCODE." }
+          $snapshotDirectories = @(Get-ChildItem -LiteralPath $snapshotOutput -Directory | Where-Object { $_.Name -notlike ".source-snapshot-staging-*" })
+          if ($snapshotDirectories.Count -ne 1) { throw "Expected exactly one source snapshot directory, found $($snapshotDirectories.Count)." }
+          $sourceManifestInput = Join-Path $snapshotDirectories[0].FullName "source-manifest.json"
+          $sourceManifest = Get-Content -LiteralPath $sourceManifestInput -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ([string]$sourceManifest.repository.head -cne $env:GITHUB_SHA -or
+              [string]$sourceManifest.security.result -cne "passed" -or
+              [int]$sourceManifest.security.blockedFindings -ne 0) {
+            throw "Source snapshot manifest failed commit or security validation."
+          }
+          $sourceName = [string]$sourceManifest.snapshot.sourceZip
+          $sourceInput = Join-Path $snapshotDirectories[0].FullName $sourceName
+          if (-not (Test-Path -LiteralPath $sourceInput -PathType Leaf)) { throw "Source snapshot archive is missing." }
+          $sourceInputSha256 = (Get-FileHash -LiteralPath $sourceInput -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sourceInputSha256 -cne [string]$sourceManifest.snapshot.sourceZipSha256) { throw "Source snapshot archive SHA-256 mismatch." }
+          $sourceEvidencePath = Join-Path $evidenceRoot $sourceName
+          $sourceManifestName = "source-manifest.json"
+          Copy-Item -LiteralPath $sourceInput -Destination $sourceEvidencePath
+          Copy-Item -LiteralPath $sourceManifestInput -Destination (Join-Path $evidenceRoot $sourceManifestName)
+          $sourceEvidenceFile = Get-Item -LiteralPath $sourceEvidencePath
+          $sourceEvidenceSha256 = (Get-FileHash -LiteralPath $sourceEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          $signedName = "huabang-business-system-v$ver-windows-x64-setup.exe"
+          $signedInstaller = Join-Path $evidenceRoot $signedName
+          Copy-Item -LiteralPath "${{ steps.unsigned.outputs.installer_path }}" -Destination $signedInstaller
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP "bsaigc-windows-signing-$env:GITHUB_RUN_ID.pfx"
+          $importedThumbprints = @()
+          try {
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+            $securePassword = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $importedCertificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation "Cert:\CurrentUser\My" -Password $securePassword -Exportable:$false)
+            if ($importedCertificates.Count -eq 0) { throw "No certificate was imported from the signing PFX." }
+            $importedThumbprints = @($importedCertificates | ForEach-Object { $_.Thumbprint })
+            $expectedThumbprint = ($env:WINDOWS_SIGNING_CERTIFICATE_SHA1 -replace '\s', '').ToUpperInvariant()
+            $codeSigningCertificate = $importedCertificates |
+              Where-Object { $_.HasPrivateKey -and $_.Thumbprint.ToUpperInvariant() -ceq $expectedThumbprint } |
+              Select-Object -First 1
+            if ($null -eq $codeSigningCertificate) { throw "The signing PFX does not contain the pinned private-key certificate." }
+
+            $windowsKits = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Windows Kits\10\bin"
+            $signTool = Get-ChildItem -LiteralPath $windowsKits -Filter "signtool.exe" -File -Recurse |
+              Where-Object { $_.DirectoryName -match '\\x64$' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if ($null -eq $signTool) { throw "signtool.exe was not found on the Windows runner." }
+            $timestampUrl = if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_TIMESTAMP_URL)) { "http://timestamp.digicert.com" } else { $env:WINDOWS_SIGNING_TIMESTAMP_URL }
+            & $signTool.FullName sign /sha1 $codeSigningCertificate.Thumbprint /s My /fd SHA256 /td SHA256 /tr $timestampUrl $signedInstaller
+            if ($LASTEXITCODE -ne 0) { throw "signtool signing failed with exit code $LASTEXITCODE." }
+            & $signTool.FullName verify /pa /all /v $signedInstaller
+            if ($LASTEXITCODE -ne 0) { throw "signtool verification failed with exit code $LASTEXITCODE." }
+          } finally {
+            foreach ($thumbprint in $importedThumbprints) {
+              $storePath = "Cert:\CurrentUser\My\$thumbprint"
+              if (Test-Path -LiteralPath $storePath) { Remove-Item -LiteralPath $storePath -Force }
+            }
+            if (Test-Path -LiteralPath $certificatePath) { Remove-Item -LiteralPath $certificatePath -Force }
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $signedInstaller
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) { throw "Authenticode status is $($signature.Status), expected Valid." }
+          if ($null -eq $signature.SignerCertificate) { throw "Signer certificate is missing." }
+          if ($null -eq $signature.TimeStamperCertificate) { throw "Trusted timestamp is missing." }
+          $expectedThumbprint = ($env:WINDOWS_SIGNING_CERTIFICATE_SHA1 -replace '\s', '').ToUpperInvariant()
+          if ($signature.SignerCertificate.Thumbprint.ToUpperInvariant() -cne $expectedThumbprint) { throw "Signer thumbprint mismatch." }
+
+          $acceptanceName = "acceptance-summary.json"
+          $acceptancePath = Join-Path $evidenceRoot $acceptanceName
+          Copy-Item -LiteralPath "${{ steps.acceptance.outputs.summary_path }}" -Destination $acceptancePath
+          $acceptance = Get-Content -LiteralPath $acceptancePath -Raw -Encoding UTF8 | ConvertFrom-Json
+          $acceptanceSha256 = (Get-FileHash -LiteralPath $acceptancePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($acceptanceSha256 -cne "${{ steps.acceptance.outputs.summary_sha256 }}") { throw "Copied acceptance summary SHA-256 mismatch." }
+
+          $noticeName = "DISTRIBUTION_PROHIBITED.txt"
+          @(
+            "WINDOWS VALIDATION EVIDENCE - DISTRIBUTION PROHIBITED",
+            "distributionAllowed=false",
+            "This signed installer is isolated input for the unified cross-platform 1.0 gate.",
+            "Do not distribute, mirror, share, or mutate any download manifest from this artifact."
+          ) | Set-Content -LiteralPath (Join-Path $evidenceRoot $noticeName) -Encoding utf8NoBOM
+
+          $signedFile = Get-Item -LiteralPath $signedInstaller
+          $signedSha256 = (Get-FileHash -LiteralPath $signedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestName = "windows-release-gate-evidence.json"
+          $manifestPath = Join-Path $evidenceRoot $manifestName
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            artifactKind = "windows-release-gate-evidence"
+            distributionAllowed = $false
+            version = $ver
+            gitCommit = $env:GITHUB_SHA
+            platform = "windows-x86_64"
+            createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            installer = [ordered]@{
+              name = $signedName
+              sizeBytes = [int64]$signedFile.Length
+              sha256 = $signedSha256
+              authenticode = [string]$signature.Status
+              authenticodeDetails = [ordered]@{
+                status = [string]$signature.Status
+                gateStatus = "passed"
+                signerThumbprint = $signature.SignerCertificate.Thumbprint.ToLowerInvariant()
+                timestampPresent = $true
+                timestampThumbprint = $signature.TimeStamperCertificate.Thumbprint.ToLowerInvariant()
+              }
+            }
+            sourceSnapshot = [ordered]@{
+              name = $sourceName
+              sizeBytes = [int64]$sourceEvidenceFile.Length
+              sha256 = $sourceEvidenceSha256
+              manifest = $sourceManifestName
+              finalSha256 = [string]$sourceManifest.snapshot.finalSha256
+            }
+            gates = [ordered]@{
+              releaseVerify = $true
+              authenticode = $true
+              nsisInstall = $true
+              launchSmoke = $true
+              sourceSnapshotSecurity = $true
+            }
+            authenticodeGate = [ordered]@{
+              status = "passed"
+              signatureStatus = [string]$signature.Status
+              certificatePinned = $true
+              timestampVerified = $true
+              signtoolVerified = $true
+            }
+            acceptanceGate = [ordered]@{
+              status = [string]$acceptance.status
+              phase = "pre-signing-installer-lifecycle"
+              summaryFile = $acceptanceName
+              summarySha256 = $acceptanceSha256
+              testedInstaller = [ordered]@{
+                name = "${{ steps.unsigned.outputs.installer_name }}"
+                sizeBytes = [int64]"${{ steps.unsigned.outputs.installer_size }}"
+                sha256 = "${{ steps.unsigned.outputs.installer_sha256 }}"
+                authenticode = "NotSigned"
+              }
+              uninstallCompleted = [bool]$acceptance.uninstallCompleted
+              registryRestored = [bool]$acceptance.registryRestored
+            }
+            buildGate = [ordered]@{
+              status = "passed"
+              versionContract = "passed"
+              productValidation = "passed"
+              nsisBuild = "passed"
+            }
+            lineage = [ordered]@{
+              unsignedInstallerSha256 = "${{ steps.unsigned.outputs.installer_sha256 }}"
+              signedInstallerSha256 = $signedSha256
+              signingInputWasAcceptedInstaller = $true
+            }
+            workflow = [ordered]@{
+              repository = $env:GITHUB_REPOSITORY
+              workflow = $env:GITHUB_WORKFLOW
+              runId = $env:GITHUB_RUN_ID
+              runAttempt = $env:GITHUB_RUN_ATTEMPT
+              eventName = $env:GITHUB_EVENT_NAME
+              ref = $env:GITHUB_REF
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
+          $readback = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ([int]$readback.schemaVersion -ne 1 -or
+              [string]$readback.artifactKind -cne "windows-release-gate-evidence" -or
+              [bool]$readback.distributionAllowed -or
+              [string]$readback.version -cne $ver -or
+              [string]$readback.gitCommit -cne $env:GITHUB_SHA -or
+              [string]$readback.platform -cne "windows-x86_64" -or
+              [string]$readback.installer.name -cne $signedName -or
+              [int64]$readback.installer.sizeBytes -ne [int64]$signedFile.Length -or
+              [string]$readback.installer.sha256 -cne $signedSha256 -or
+              [string]$readback.installer.authenticode -cne "Valid" -or
+              [string]$readback.sourceSnapshot.name -cne $sourceName -or
+              [int64]$readback.sourceSnapshot.sizeBytes -ne [int64]$sourceEvidenceFile.Length -or
+              [string]$readback.sourceSnapshot.sha256 -cne $sourceEvidenceSha256 -or
+              -not [bool]$readback.gates.releaseVerify -or
+              -not [bool]$readback.gates.authenticode -or
+              -not [bool]$readback.gates.nsisInstall -or
+              -not [bool]$readback.gates.launchSmoke -or
+              -not [bool]$readback.gates.sourceSnapshotSecurity -or
+              [string]$readback.authenticodeGate.status -cne "passed" -or
+              [string]$readback.acceptanceGate.status -cne "passed") {
+            throw "Windows validation evidence manifest contract validation failed."
+          }
+
+          $checksumName = "SHA256SUMS-windows-validation.txt"
+          @($signedName, $sourceName, $sourceManifestName, $acceptanceName, $manifestName, $noticeName) | ForEach-Object {
+            $path = Join-Path $evidenceRoot $_
+            "$(Get-FileHash -LiteralPath $path -Algorithm SHA256 | Select-Object -ExpandProperty Hash) *$_"
+          } | Set-Content -LiteralPath (Join-Path $evidenceRoot $checksumName) -Encoding ascii
+          "evidence_root=$($signedFile.Directory.FullName -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+          "manifest_path=$($manifestPath -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+          "Windows validation evidence passed; distributionAllowed=false." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload isolated Windows validation evidence
         uses: actions/upload-artifact@v4
         with:
-          name: banshan-workbench-setup
-          path: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            .runtime/nsis-acceptance/github-release-${{ steps.ver.outputs.version }}/acceptance-summary.json
+          name: windows-release-gate-evidence-v${{ steps.version.outputs.version }}-${{ github.sha }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ steps.evidence.outputs.evidence_root }}/*
+
+      - name: Summarize Windows validation boundary
+        if: always()
+        shell: pwsh
+        run: |
+          "Artifact kind: windows-release-gate-evidence." >> $env:GITHUB_STEP_SUMMARY
+          "distributionAllowed=false; the signed installer is isolated validation evidence only." >> $env:GITHUB_STEP_SUMMARY
+          "This workflow only uploads the isolated GitHub validation artifact." >> $env:GITHUB_STEP_SUMMARY

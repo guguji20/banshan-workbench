@@ -100,6 +100,13 @@ pub struct BackupRestorePreparation {
     pub replayed_response: Option<BackupCommandResponse>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReusableBackedUpObject {
+    pub asset_id: String,
+    pub remote_object_key: String,
+    pub etag: Option<String>,
+}
+
 #[derive(Debug)]
 struct BackupCommandMeta {
     command_id: String,
@@ -479,6 +486,41 @@ impl BackupOutbox {
         Ok(self
             .get(asset_id)?
             .filter(|backup| backup.content_sha256.eq_ignore_ascii_case(content_sha256)))
+    }
+
+    /// Finds the newest successful remote object for content that is already backed up.
+    ///
+    /// This is intentionally content-addressed and does not alter the existing asset-scoped
+    /// backup lifecycle. Stable tie-breakers keep reuse deterministic when completion times match.
+    pub fn find_latest_backed_up_by_sha256(
+        &self,
+        content_sha256: &str,
+    ) -> Result<Option<ReusableBackedUpObject>, HostError> {
+        validate_sha256(content_sha256)?;
+        let connection = self.lock()?;
+        connection
+            .query_row(
+                "SELECT asset_id, remote_object_key, remote_etag
+                 FROM asset_backups
+                 WHERE content_sha256 = ?1
+                   AND state = 'backedUp'
+                   AND backed_up_at IS NOT NULL
+                   AND remote_object_key IS NOT NULL
+                   AND length(trim(remote_object_key)) > 0
+                 ORDER BY backed_up_at DESC, updated_at DESC, revision DESC,
+                          created_at DESC, asset_id ASC
+                 LIMIT 1",
+                params![content_sha256.to_ascii_lowercase()],
+                |row| {
+                    Ok(ReusableBackedUpObject {
+                        asset_id: row.get(0)?,
+                        remote_object_key: row.get(1)?,
+                        etag: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(sql_error)
     }
 
     pub fn list(&self, limit: usize) -> Result<Vec<AssetBackupRecord>, HostError> {
@@ -1685,6 +1727,131 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn complete_backup_at(
+        outbox: &BackupOutbox,
+        asset_id: &str,
+        sha256: &str,
+        remote_object_key: &str,
+        etag: Option<&str>,
+        backed_up_at: i64,
+    ) {
+        outbox
+            .queue(
+                queue_command(asset_id, &format!("queue-key-{asset_id}")),
+                sha256,
+            )
+            .unwrap();
+        let claimed = outbox
+            .claim_next_at(i64::MAX / 4, &format!("trace:claim:{asset_id}"))
+            .unwrap()
+            .backup
+            .unwrap();
+        assert_eq!(claimed.asset_id, asset_id);
+        outbox
+            .mark_backed_up_at(
+                asset_id,
+                sha256,
+                claimed.revision,
+                remote_object_key,
+                etag,
+                &format!("trace:backed-up:{asset_id}"),
+                backed_up_at,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn reusable_backed_up_object_selects_deterministic_latest_success_for_sha256() {
+        let outbox = in_memory_outbox();
+        complete_backup_at(
+            &outbox,
+            "asset-old",
+            HASH_A,
+            "backup/hash-a/old",
+            Some("etag-old"),
+            1_000,
+        );
+        complete_backup_at(
+            &outbox,
+            "asset-new-z",
+            HASH_A,
+            "backup/hash-a/new-z",
+            Some("etag-new-z"),
+            2_000,
+        );
+        complete_backup_at(
+            &outbox,
+            "asset-new-a",
+            HASH_A,
+            "backup/hash-a/new-a",
+            Some("etag-new-a"),
+            2_000,
+        );
+
+        assert_eq!(
+            outbox.find_latest_backed_up_by_sha256(HASH_A).unwrap(),
+            Some(ReusableBackedUpObject {
+                asset_id: "asset-new-a".to_string(),
+                remote_object_key: "backup/hash-a/new-a".to_string(),
+                etag: Some("etag-new-a".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn reusable_backed_up_object_ignores_non_successful_records() {
+        let outbox = in_memory_outbox();
+        outbox
+            .queue(queue_command("asset-failed", "queue-key-failed"), HASH_A)
+            .unwrap();
+        let claimed = outbox
+            .claim_next_at(i64::MAX / 4, "trace:claim:failed")
+            .unwrap()
+            .backup
+            .unwrap();
+        outbox
+            .mark_failed_at(
+                "asset-failed",
+                HASH_A,
+                claimed.revision,
+                "upload failed",
+                "trace:failed",
+                1_000,
+            )
+            .unwrap();
+
+        assert_eq!(
+            outbox.find_latest_backed_up_by_sha256(HASH_A).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn reusable_backed_up_object_does_not_cross_sha256_values() {
+        let outbox = in_memory_outbox();
+        complete_backup_at(
+            &outbox,
+            "asset-hash-b",
+            HASH_B,
+            "backup/hash-b/object",
+            Some("etag-hash-b"),
+            1_000,
+        );
+
+        assert_eq!(
+            outbox.find_latest_backed_up_by_sha256(HASH_A).unwrap(),
+            None
+        );
+        assert_eq!(
+            outbox.find_latest_backed_up_by_sha256(HASH_B).unwrap(),
+            Some(ReusableBackedUpObject {
+                asset_id: "asset-hash-b".to_string(),
+                remote_object_key: "backup/hash-b/object".to_string(),
+                etag: Some("etag-hash-b".to_string()),
+            })
+        );
     }
 
     #[test]

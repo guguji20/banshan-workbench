@@ -13,6 +13,8 @@ mod business_closure_service;
 mod business_skill_service;
 mod business_tool_host_adapter;
 mod business_tool_registry;
+#[allow(dead_code, unused_imports)]
+mod business_v1;
 mod business_workspace_service;
 mod case_library;
 mod codex_host;
@@ -47,6 +49,7 @@ mod requirement_brief_service;
 #[allow(dead_code)]
 mod review_report;
 mod security;
+mod shared_case_service;
 // Worker lifecycle APIs are consumed by the durable runner in the next integration slice.
 #[allow(dead_code)]
 mod task_engine;
@@ -72,13 +75,13 @@ use protocol::{
     AssetSourceSelection, AuthChangePasswordPayload, AuthCreateUserPayload, AuthCredentials,
     AuthDeleteUserPayload, AuthResetPasswordPayload, AuthStatus, AuthUsersSnapshot,
     BackupCommandEnvelope, BackupCommandResponse, BackupDomainEvent, BrainAttachmentPreview,
-    BrainDroppedItems, BrainHostHealth, BrainThreadRecord, BrainTurnContext, BrainTurnRecord,
-    BrainTurnStartResult, BrainWorkspaceSelection, BusinessCustomerReceivableSummary,
-    BusinessWorkspaceCommandEnvelope, BusinessWorkspaceCommandResponse,
-    BusinessWorkspaceDomainEvent, BusinessWorkspacePrefillCandidate,
-    BusinessWorkspacePrefillPreview, BusinessWorkspaceRecord, CaseCommandEnvelope,
-    CaseCommandResponse, CaseDomainEvent, CaseRecord, CodexProbeStatus, CommandEnvelope,
-    CommandResponse, ContractReviewCommandEnvelope, ContractReviewCommandResponse,
+    BrainDroppedItems, BrainHostHealth, BrainProjectWorkspaceBinding, BrainThreadRecord,
+    BrainTurnContext, BrainTurnRecord, BrainTurnStartResult, BrainWorkspaceSelection,
+    BusinessCustomerReceivableSummary, BusinessWorkspaceCommandEnvelope,
+    BusinessWorkspaceCommandResponse, BusinessWorkspaceDomainEvent,
+    BusinessWorkspacePrefillCandidate, BusinessWorkspacePrefillPreview, BusinessWorkspaceRecord,
+    CaseCommandEnvelope, CaseCommandResponse, CaseDomainEvent, CaseRecord, CodexProbeStatus,
+    CommandEnvelope, CommandResponse, ContractReviewCommandEnvelope, ContractReviewCommandResponse,
     ContractReviewDomainEvent, ContractReviewRecord, DesktopSettingsCommandEnvelope,
     DesktopSettingsCommandResponse, DiagnosticRecord, DiagnosticReportPayload, DomainEvent,
     EvidenceContext, ExecutionBriefCommandEnvelope, ExecutionBriefCommandResponse,
@@ -138,6 +141,116 @@ impl Drop for AppState {
     }
 }
 
+fn bind_authenticated_context(
+    context: &mut OperationContext,
+    principal: &auth_service::AuthPrincipal,
+) {
+    context.actor_id = principal.username.clone();
+    context.account_id = Some(principal.username.clone());
+}
+
+fn project_command_context_mut(command: &mut CommandEnvelope) -> &mut OperationContext {
+    match command {
+        CommandEnvelope::ProjectCreate { context, .. }
+        | CommandEnvelope::ProjectUpdateBrief { context, .. }
+        | CommandEnvelope::ProjectChangeStage { context, .. } => context,
+    }
+}
+
+fn task_command_context_mut(command: &mut TaskCommandEnvelope) -> &mut OperationContext {
+    match command {
+        TaskCommandEnvelope::Create { context, .. }
+        | TaskCommandEnvelope::Cancel { context, .. }
+        | TaskCommandEnvelope::Retry { context, .. } => context,
+    }
+}
+
+fn case_command_context_mut(command: &mut CaseCommandEnvelope) -> &mut OperationContext {
+    match command {
+        CaseCommandEnvelope::Create { context, .. }
+        | CaseCommandEnvelope::Update { context, .. } => context,
+    }
+}
+
+fn shared_case_command_context_mut(
+    command: &mut protocol::SharedCaseCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        protocol::SharedCaseCommandEnvelope::Publish { context, .. }
+        | protocol::SharedCaseCommandEnvelope::UpdateGrants { context, .. }
+        | protocol::SharedCaseCommandEnvelope::Withdraw { context, .. } => context,
+    }
+}
+
+fn requirement_brief_command_context_mut(
+    command: &mut RequirementBriefCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        RequirementBriefCommandEnvelope::Create { context, .. }
+        | RequirementBriefCommandEnvelope::Update { context, .. }
+        | RequirementBriefCommandEnvelope::ChangeStatus { context, .. } => context,
+    }
+}
+
+fn contract_review_command_context_mut(
+    command: &mut ContractReviewCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        ContractReviewCommandEnvelope::Create { context, .. }
+        | ContractReviewCommandEnvelope::Start { context, .. }
+        | ContractReviewCommandEnvelope::Cancel { context, .. }
+        | ContractReviewCommandEnvelope::DecideFinding { context, .. }
+        | ContractReviewCommandEnvelope::GenerateReport { context, .. }
+        | ContractReviewCommandEnvelope::RetryStage { context, .. } => context,
+    }
+}
+
+fn backup_command_context_mut(command: &mut BackupCommandEnvelope) -> &mut OperationContext {
+    match command {
+        BackupCommandEnvelope::Queue { context, .. }
+        | BackupCommandEnvelope::Retry { context, .. }
+        | BackupCommandEnvelope::Cancel { context, .. }
+        | BackupCommandEnvelope::Restore { context, .. } => context,
+    }
+}
+
+fn ai_credential_command_context_mut(
+    command: &mut AiCredentialCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        AiCredentialCommandEnvelope::Status { context, .. }
+        | AiCredentialCommandEnvelope::UpsertProvider { context, .. }
+        | AiCredentialCommandEnvelope::RemoveProvider { context, .. }
+        | AiCredentialCommandEnvelope::SelectProvider { context, .. }
+        | AiCredentialCommandEnvelope::TestProvider { context, .. }
+        | AiCredentialCommandEnvelope::DiscoverModels { context, .. }
+        | AiCredentialCommandEnvelope::ClearProviderApiKey { context, .. }
+        | AiCredentialCommandEnvelope::SaveBsaigcApiKey { context, .. }
+        | AiCredentialCommandEnvelope::ClearBsaigcApiKey { context, .. } => context,
+    }
+}
+
+fn desktop_settings_command_context_mut(
+    command: &mut DesktopSettingsCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        DesktopSettingsCommandEnvelope::Status { context, .. }
+        | DesktopSettingsCommandEnvelope::OpenStorageLocation { context, .. }
+        | DesktopSettingsCommandEnvelope::ClearCache { context, .. }
+        | DesktopSettingsCommandEnvelope::CheckForUpdates { context, .. } => context,
+    }
+}
+
+fn execution_brief_command_context_mut(
+    command: &mut ExecutionBriefCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        ExecutionBriefCommandEnvelope::Create { context, .. }
+        | ExecutionBriefCommandEnvelope::Update { context, .. }
+        | ExecutionBriefCommandEnvelope::ChangeStatus { context, .. } => context,
+    }
+}
+
 #[tauri::command]
 fn auth_status(state: State<'_, AppState>) -> Result<AuthStatus, HostError> {
     Ok(state.auth.status())
@@ -161,12 +274,25 @@ fn auth_login(
 
 #[tauri::command]
 fn auth_logout(state: State<'_, AppState>) -> Result<AuthStatus, HostError> {
+    state.auth.require_active_principal()?;
     Ok(state.auth.logout())
 }
 
 #[tauri::command]
 fn auth_remembered_credentials() -> Result<Option<AuthCredentials>, HostError> {
-    remembered_auth::load()
+    remembered_auth::load_public_hint()
+}
+
+#[tauri::command]
+fn auth_login_remembered(state: State<'_, AppState>) -> Result<AuthStatus, HostError> {
+    let credentials = remembered_auth::load_for_login()?.ok_or_else(|| {
+        HostError::new(
+            "AUTH_REMEMBERED_CREDENTIALS_NOT_FOUND",
+            "no remembered login is available",
+            false,
+        )
+    })?;
+    state.auth.login(credentials)
 }
 
 #[tauri::command]
@@ -184,11 +310,13 @@ fn auth_change_password(
     state: State<'_, AppState>,
     payload: AuthChangePasswordPayload,
 ) -> Result<AuthStatus, HostError> {
+    state.auth.require_active_principal()?;
     state.auth.change_password(payload)
 }
 
 #[tauri::command]
 fn auth_list_users(state: State<'_, AppState>) -> Result<AuthUsersSnapshot, HostError> {
+    state.auth.require_active_admin()?;
     state.auth.list_users()
 }
 
@@ -197,6 +325,7 @@ fn auth_create_user(
     state: State<'_, AppState>,
     payload: AuthCreateUserPayload,
 ) -> Result<AuthUsersSnapshot, HostError> {
+    state.auth.require_active_admin()?;
     state.auth.create_user(payload)
 }
 
@@ -205,6 +334,7 @@ fn auth_reset_password(
     state: State<'_, AppState>,
     payload: AuthResetPasswordPayload,
 ) -> Result<AuthUsersSnapshot, HostError> {
+    state.auth.require_active_admin()?;
     state.auth.reset_password(payload)
 }
 
@@ -213,11 +343,13 @@ fn auth_delete_user(
     state: State<'_, AppState>,
     payload: AuthDeleteUserPayload,
 ) -> Result<AuthUsersSnapshot, HostError> {
+    state.auth.require_active_admin()?;
     state.auth.delete_user(payload)
 }
 
 #[tauri::command]
 fn auth_refresh_registry(state: State<'_, AppState>) -> Result<AuthStatus, HostError> {
+    state.auth.require_active_principal()?;
     Ok(state.auth.refresh_registry())
 }
 
@@ -225,8 +357,10 @@ fn auth_refresh_registry(state: State<'_, AppState>) -> Result<AuthStatus, HostE
 fn execute_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: CommandEnvelope,
+    mut command: CommandEnvelope,
 ) -> Result<CommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    bind_authenticated_context(project_command_context_mut(&mut command), &principal);
     let outcome = state.host.execute(command)?;
     for event in &outcome.emitted_events {
         // SQLite is authoritative. A WebView delivery failure must not turn an
@@ -243,6 +377,7 @@ fn execute_command(
 
 #[tauri::command]
 fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectRecord>, HostError> {
+    state.auth.require_active_principal()?;
     state.host.list_projects()
 }
 
@@ -251,6 +386,7 @@ fn replay_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<DomainEvent>, HostError> {
+    state.auth.require_active_principal()?;
     state
         .host
         .replay_events(request.after_sequence, request.limit)
@@ -260,8 +396,10 @@ fn replay_events(
 fn execute_task_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: TaskCommandEnvelope,
+    mut command: TaskCommandEnvelope,
 ) -> Result<TaskCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    bind_authenticated_context(task_command_context_mut(&mut command), &principal);
     let outcome = state.tasks.execute_command(command)?;
     for event in &outcome.emitted_events {
         state.task_runner.notify_event(event);
@@ -272,6 +410,7 @@ fn execute_task_command(
 
 #[tauri::command]
 fn list_tasks(state: State<'_, AppState>) -> Result<Vec<TaskRecord>, HostError> {
+    state.auth.require_active_principal()?;
     state.tasks.list()
 }
 
@@ -280,6 +419,7 @@ fn replay_task_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<TaskDomainEvent>, HostError> {
+    state.auth.require_active_principal()?;
     state
         .tasks
         .replay_events(request.after_sequence, request.limit)
@@ -289,6 +429,7 @@ fn replay_task_events(
 async fn select_asset_source(
     state: State<'_, AppState>,
 ) -> Result<Option<AssetSourceSelection>, HostError> {
+    state.auth.require_active_principal()?;
     let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_file())
         .await
         .map_err(|error| HostError::internal(format!("asset picker task failed: {error}")))?;
@@ -301,6 +442,7 @@ async fn select_asset_source(
 async fn select_asset_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<AssetSourceSelection>, HostError> {
+    state.auth.require_active_principal()?;
     let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_files())
         .await
         .map_err(|error| HostError::internal(format!("asset picker task failed: {error}")))?;
@@ -316,6 +458,7 @@ async fn select_asset_sources(
 async fn select_brain_workspace(
     state: State<'_, AppState>,
 ) -> Result<Option<BrainWorkspaceSelection>, HostError> {
+    state.auth.require_active_principal()?;
     let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
         .await
         .map_err(|error| HostError::internal(format!("workspace picker task failed: {error}")))?;
@@ -325,10 +468,58 @@ async fn select_brain_workspace(
 }
 
 #[tauri::command]
+fn bind_brain_project_workspace(
+    state: State<'_, AppState>,
+    project_id: String,
+    workspace_token: String,
+    expected_revision: Option<i64>,
+) -> Result<BrainProjectWorkspaceBinding, HostError> {
+    state.auth.require_active_principal()?;
+    let connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset SQLite lock is poisoned"))?;
+    brain_workspace_registry::bind_project(
+        &connection,
+        &state.brain_workspaces,
+        &project_id,
+        &workspace_token,
+        expected_revision,
+    )
+}
+
+#[tauri::command]
+fn list_brain_project_workspaces(
+    state: State<'_, AppState>,
+) -> Result<Vec<BrainProjectWorkspaceBinding>, HostError> {
+    state.auth.require_active_principal()?;
+    let connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset SQLite lock is poisoned"))?;
+    brain_workspace_registry::list_projects(&connection, &state.brain_workspaces)
+}
+
+#[tauri::command]
+fn unbind_brain_project_workspace(
+    state: State<'_, AppState>,
+    project_id: String,
+    expected_revision: i64,
+) -> Result<(), HostError> {
+    state.auth.require_active_principal()?;
+    let connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset SQLite lock is poisoned"))?;
+    brain_workspace_registry::unbind_project(&connection, &project_id, expected_revision)
+}
+
+#[tauri::command]
 fn register_brain_dropped_paths(
     state: State<'_, AppState>,
     paths: Vec<PathBuf>,
 ) -> Result<BrainDroppedItems, HostError> {
+    state.auth.require_active_principal()?;
     if paths.len() > 20 {
         return Err(HostError::validation("drop at most 20 items at a time"));
     }
@@ -363,6 +554,7 @@ fn stage_clipboard_image(
     state: State<'_, AppState>,
     request: StageClipboardImageRequest,
 ) -> Result<AssetSourceSelection, HostError> {
+    state.auth.require_active_principal()?;
     const MAX_CLIPBOARD_IMAGE_BYTES: usize = 20 * 1024 * 1024;
     let extension = match request.mime_type.as_str() {
         "image/png" => "png",
@@ -419,6 +611,7 @@ fn get_brain_attachment_preview(
     state: State<'_, AppState>,
     asset_id: String,
 ) -> Result<Option<BrainAttachmentPreview>, HostError> {
+    state.auth.require_active_principal()?;
     const MAX_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
     let connection = state
         .asset_connection
@@ -442,8 +635,12 @@ fn get_brain_attachment_preview(
 fn execute_asset_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: AssetCommandEnvelope,
+    mut command: AssetCommandEnvelope,
 ) -> Result<AssetCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    let AssetCommandEnvelope::Import { context, .. } = &mut command;
+    context.actor_id = principal.username.clone();
+    context.account_id = Some(principal.username);
     let (source_token, backup_context) = match &command {
         AssetCommandEnvelope::Import {
             context, payload, ..
@@ -490,6 +687,7 @@ fn execute_asset_command(
 
 #[tauri::command]
 fn list_assets(state: State<'_, AppState>) -> Result<Vec<AssetRecord>, HostError> {
+    state.auth.require_active_principal()?;
     let connection = state
         .asset_connection
         .lock()
@@ -502,6 +700,7 @@ fn replay_asset_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<AssetDomainEvent>, HostError> {
+    state.auth.require_active_principal()?;
     let connection = state
         .asset_connection
         .lock()
@@ -523,6 +722,7 @@ fn get_asset_action_capabilities(
     state: State<'_, AppState>,
     asset_id: String,
 ) -> Result<AssetActionCapabilities, HostError> {
+    state.auth.require_active_admin()?;
     let connection = state
         .asset_connection
         .lock()
@@ -554,6 +754,7 @@ fn get_asset_action_capabilities(
 
 #[tauri::command]
 async fn open_asset(state: State<'_, AppState>, asset_id: String) -> Result<(), HostError> {
+    state.auth.require_active_admin()?;
     let connection = Arc::clone(&state.asset_connection);
     let vault_root = state.vault_root.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -594,6 +795,7 @@ async fn open_asset(state: State<'_, AppState>, asset_id: String) -> Result<(), 
 
 #[tauri::command]
 async fn export_asset(state: State<'_, AppState>, asset_id: String) -> Result<bool, HostError> {
+    state.auth.require_active_admin()?;
     let connection = Arc::clone(&state.asset_connection);
     let vault_root = state.vault_root.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -641,8 +843,10 @@ async fn export_asset(state: State<'_, AppState>, asset_id: String) -> Result<bo
 fn execute_case_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: CaseCommandEnvelope,
+    mut command: CaseCommandEnvelope,
 ) -> Result<CaseCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    bind_authenticated_context(case_command_context_mut(&mut command), &principal);
     let mut connection = state
         .asset_connection
         .lock()
@@ -654,6 +858,7 @@ fn execute_case_command(
 
 #[tauri::command]
 fn list_cases(state: State<'_, AppState>) -> Result<Vec<CaseRecord>, HostError> {
+    state.auth.require_active_principal()?;
     let connection = state
         .asset_connection
         .lock()
@@ -662,10 +867,81 @@ fn list_cases(state: State<'_, AppState>) -> Result<Vec<CaseRecord>, HostError> 
 }
 
 #[tauri::command]
+fn execute_shared_case_command(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mut command: protocol::SharedCaseCommandEnvelope,
+) -> Result<protocol::SharedCaseCommandResponse, HostError> {
+    let principal = state.auth.require_active_admin()?;
+    bind_authenticated_context(shared_case_command_context_mut(&mut command), &principal);
+    let mut connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset/shared-case SQLite lock is poisoned"))?;
+    let outcome = shared_case_service::execute_command(
+        &mut connection,
+        &state.vault_root,
+        state.backup_outbox.as_ref(),
+        command,
+    )?;
+    let should_wake_backup_worker =
+        outcome.response.publication.status == protocol::SharedCasePublicationStatus::PendingBackup;
+    drop(connection);
+    emit_after_commit(
+        &app,
+        protocol::SHARED_CASE_EVENT_CHANNEL,
+        &outcome.emitted_events,
+    );
+    if should_wake_backup_worker {
+        state.backup_worker.wake();
+    }
+    Ok(outcome.response)
+}
+
+#[tauri::command]
+fn list_authorized_shared_cases(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<protocol::SharedCasePublicationRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    let mut connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset/shared-case SQLite lock is poisoned"))?;
+    let reconciliation_events = shared_case_service::reconcile_pending(
+        &mut connection,
+        state.backup_outbox.as_ref(),
+        &format!("shared-case-reconcile:{}", Uuid::new_v4()),
+    )?;
+    let publications = shared_case_service::list_authorized(&connection, &principal.username)?;
+    drop(connection);
+    emit_after_commit(
+        &app,
+        protocol::SHARED_CASE_EVENT_CHANNEL,
+        &reconciliation_events,
+    );
+    Ok(publications)
+}
+
+#[tauri::command]
+fn replay_shared_case_events(
+    state: State<'_, AppState>,
+    request: ReplayEventsRequest,
+) -> Result<Vec<protocol::SharedCaseDomainEvent>, HostError> {
+    state.auth.require_active_admin()?;
+    let connection = state
+        .asset_connection
+        .lock()
+        .map_err(|_| HostError::internal("asset/shared-case SQLite lock is poisoned"))?;
+    shared_case_service::replay_events(&connection, request.after_sequence, request.limit)
+}
+
+#[tauri::command]
 fn replay_case_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<CaseDomainEvent>, HostError> {
+    state.auth.require_active_principal()?;
     let connection = state
         .asset_connection
         .lock()
@@ -677,8 +953,13 @@ fn replay_case_events(
 fn execute_requirement_brief_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: RequirementBriefCommandEnvelope,
+    mut command: RequirementBriefCommandEnvelope,
 ) -> Result<RequirementBriefCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    bind_authenticated_context(
+        requirement_brief_command_context_mut(&mut command),
+        &principal,
+    );
     authorize_requirement_brief_command(&state.host, &command)?;
     let mut connection = state
         .asset_connection
@@ -697,8 +978,9 @@ fn execute_requirement_brief_command(
 fn list_requirement_briefs(
     state: State<'_, AppState>,
 ) -> Result<Vec<RequirementBriefRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "requirementBrief.read",
         "requirementBrief",
         None,
@@ -717,8 +999,9 @@ fn replay_requirement_brief_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<RequirementBriefDomainEvent>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "requirementBrief.read",
         "requirementBrief",
         None,
@@ -773,8 +1056,13 @@ fn authorize_requirement_brief_command(
 fn execute_business_workspace_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: BusinessWorkspaceCommandEnvelope,
+    mut command: BusinessWorkspaceCommandEnvelope,
 ) -> Result<BusinessWorkspaceCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    ensure_business_workspace_command_role(principal.role, &command)?;
+    let context = business_workspace_command_context_mut(&mut command);
+    context.actor_id = principal.username.clone();
+    context.account_id = Some(principal.username.clone());
     authorize_business_workspace_command(&state.host, &command)?;
     let backup_context = business_workspace_command_context(&command).clone();
     let mut connection = state
@@ -804,7 +1092,228 @@ fn execute_business_workspace_command(
     for warning in backup_warnings {
         eprintln!("business local success with deferred backup warning: {warning}");
     }
-    Ok(outcome.response)
+    Ok(filter_business_workspace_response_for_role(
+        outcome.response,
+        principal.role,
+    ))
+}
+
+fn ensure_business_workspace_command_role(
+    role: protocol::AppUserRole,
+    command: &BusinessWorkspaceCommandEnvelope,
+) -> Result<(), HostError> {
+    if role == protocol::AppUserRole::Admin || !business_workspace_command_requires_admin(command) {
+        return Ok(());
+    }
+    Err(HostError::new(
+        "AUTH_FORBIDDEN",
+        "administrator access is required for this business command",
+        false,
+    ))
+}
+
+fn business_workspace_command_requires_admin(command: &BusinessWorkspaceCommandEnvelope) -> bool {
+    business_workspace_command_role_policy(business_workspace_command_type(command))
+        .unwrap_or(protocol::AppUserRole::Admin)
+        == protocol::AppUserRole::Admin
+}
+
+fn business_workspace_command_type(command: &BusinessWorkspaceCommandEnvelope) -> &'static str {
+    match command {
+        BusinessWorkspaceCommandEnvelope::Create { .. } => "businessWorkspace.create",
+        BusinessWorkspaceCommandEnvelope::UpdateProfile { .. } => "businessWorkspace.updateProfile",
+        BusinessWorkspaceCommandEnvelope::CreateDocument { .. } => {
+            "businessWorkspace.createDocument"
+        }
+        BusinessWorkspaceCommandEnvelope::PromoteReviewedContract { .. } => {
+            "businessWorkspace.promoteReviewedContract"
+        }
+        BusinessWorkspaceCommandEnvelope::ChangeDocumentStatus { .. } => {
+            "businessWorkspace.changeDocumentStatus"
+        }
+        BusinessWorkspaceCommandEnvelope::GenerateDocument { .. } => {
+            "businessWorkspace.generateDocument"
+        }
+        BusinessWorkspaceCommandEnvelope::UpsertPayment { .. } => "businessWorkspace.upsertPayment",
+        BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch { .. } => {
+            "businessWorkspace.upsertSettlementBatch"
+        }
+        BusinessWorkspaceCommandEnvelope::VoidSettlementBatch { .. } => {
+            "businessWorkspace.voidSettlementBatch"
+        }
+        BusinessWorkspaceCommandEnvelope::ConfirmQuote { .. } => "businessWorkspace.confirmQuote",
+        BusinessWorkspaceCommandEnvelope::RecordReceipt { .. } => "businessWorkspace.recordReceipt",
+        BusinessWorkspaceCommandEnvelope::ReverseReceipt { .. } => {
+            "businessWorkspace.reverseReceipt"
+        }
+        BusinessWorkspaceCommandEnvelope::AdoptLatestConfirmedRequirement { .. } => {
+            "businessWorkspace.adoptLatestConfirmedRequirement"
+        }
+        BusinessWorkspaceCommandEnvelope::UpsertCustomer { .. } => {
+            "businessWorkspace.upsertCustomer"
+        }
+        BusinessWorkspaceCommandEnvelope::AssignCustomer { .. } => {
+            "businessWorkspace.assignCustomer"
+        }
+        BusinessWorkspaceCommandEnvelope::UpsertMilestone { .. } => {
+            "businessWorkspace.upsertMilestone"
+        }
+        BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { .. } => {
+            "businessWorkspace.createAcceptanceBatch"
+        }
+        BusinessWorkspaceCommandEnvelope::PrepareAcceptanceDocuments { .. } => {
+            "businessWorkspace.prepareAcceptanceDocuments"
+        }
+        BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial { .. } => {
+            "businessWorkspace.upsertAcceptanceMaterial"
+        }
+        BusinessWorkspaceCommandEnvelope::RegisterDeliverableVersion { .. } => {
+            "businessWorkspace.registerDeliverableVersion"
+        }
+        BusinessWorkspaceCommandEnvelope::RecordDeliverySent { .. } => {
+            "businessWorkspace.recordDeliverySent"
+        }
+        BusinessWorkspaceCommandEnvelope::RecordDeliverySignoff { .. } => {
+            "businessWorkspace.recordDeliverySignoff"
+        }
+        BusinessWorkspaceCommandEnvelope::RecordInvoiceIssued { .. } => {
+            "businessWorkspace.recordInvoiceIssued"
+        }
+        BusinessWorkspaceCommandEnvelope::RecordInvoiceRedCorrection { .. } => {
+            "businessWorkspace.recordInvoiceRedCorrection"
+        }
+        BusinessWorkspaceCommandEnvelope::AttachInvoiceAsset { .. } => {
+            "businessWorkspace.attachInvoiceAsset"
+        }
+        BusinessWorkspaceCommandEnvelope::CreateArchiveSnapshot { .. } => {
+            "businessWorkspace.createArchiveSnapshot"
+        }
+        BusinessWorkspaceCommandEnvelope::NormalizeLegacyTemplate { .. } => {
+            "businessWorkspace.normalizeLegacyTemplate"
+        }
+        BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion { .. } => {
+            "businessWorkspace.approveTemplateVersion"
+        }
+        BusinessWorkspaceCommandEnvelope::RejectTemplateVersion { .. } => {
+            "businessWorkspace.rejectTemplateVersion"
+        }
+        BusinessWorkspaceCommandEnvelope::ChangeStatus { .. } => "businessWorkspace.changeStatus",
+    }
+}
+
+fn business_workspace_command_role_policy(command_type: &str) -> Option<protocol::AppUserRole> {
+    match command_type {
+        "businessWorkspace.updateProfile"
+        | "businessWorkspace.promoteReviewedContract"
+        | "businessWorkspace.changeDocumentStatus"
+        | "businessWorkspace.generateDocument"
+        | "businessWorkspace.upsertPayment"
+        | "businessWorkspace.upsertSettlementBatch"
+        | "businessWorkspace.voidSettlementBatch"
+        | "businessWorkspace.confirmQuote"
+        | "businessWorkspace.recordReceipt"
+        | "businessWorkspace.reverseReceipt"
+        | "businessWorkspace.recordDeliverySent"
+        | "businessWorkspace.recordDeliverySignoff"
+        | "businessWorkspace.recordInvoiceIssued"
+        | "businessWorkspace.recordInvoiceRedCorrection"
+        | "businessWorkspace.attachInvoiceAsset"
+        | "businessWorkspace.createArchiveSnapshot"
+        | "businessWorkspace.normalizeLegacyTemplate"
+        | "businessWorkspace.approveTemplateVersion"
+        | "businessWorkspace.rejectTemplateVersion"
+        | "businessWorkspace.changeStatus" => Some(protocol::AppUserRole::Admin),
+        "businessWorkspace.create"
+        | "businessWorkspace.createDocument"
+        | "businessWorkspace.adoptLatestConfirmedRequirement"
+        | "businessWorkspace.upsertCustomer"
+        | "businessWorkspace.assignCustomer"
+        | "businessWorkspace.upsertMilestone"
+        | "businessWorkspace.createAcceptanceBatch"
+        | "businessWorkspace.prepareAcceptanceDocuments"
+        | "businessWorkspace.upsertAcceptanceMaterial"
+        | "businessWorkspace.registerDeliverableVersion" => Some(protocol::AppUserRole::Member),
+        _ => None,
+    }
+}
+
+fn redact_business_profile_for_member(profile: &mut protocol::BusinessProfile) {
+    profile.supplier_bank_name.clear();
+    profile.supplier_bank_account.clear();
+}
+
+fn redact_payment_application_for_member(
+    payment_application: &mut Option<protocol::BusinessPaymentApplicationData>,
+) {
+    if let Some(payment_application) = payment_application {
+        payment_application.supplier_bank_routing_number.clear();
+        payment_application.bank_account_profile_version.clear();
+    }
+}
+
+fn filter_business_workspace_for_role(
+    mut workspace: BusinessWorkspaceRecord,
+    role: protocol::AppUserRole,
+) -> BusinessWorkspaceRecord {
+    if role == protocol::AppUserRole::Admin {
+        return workspace;
+    }
+    redact_business_profile_for_member(&mut workspace.profile);
+    for document in &mut workspace.documents {
+        redact_business_profile_for_member(&mut document.snapshot.profile);
+        redact_payment_application_for_member(&mut document.snapshot.payment_application);
+    }
+    for batch in &mut workspace.acceptance_batches {
+        for output_spec in &mut batch.output_specs {
+            redact_payment_application_for_member(&mut output_spec.payment_application);
+        }
+    }
+    workspace
+}
+
+fn filter_business_workspace_response_for_role(
+    mut response: BusinessWorkspaceCommandResponse,
+    role: protocol::AppUserRole,
+) -> BusinessWorkspaceCommandResponse {
+    response.business_workspace =
+        filter_business_workspace_for_role(response.business_workspace, role);
+    response
+}
+
+fn filter_business_prefill_candidates_for_role(
+    mut candidates: Vec<BusinessWorkspacePrefillCandidate>,
+    role: protocol::AppUserRole,
+) -> Vec<BusinessWorkspacePrefillCandidate> {
+    if role == protocol::AppUserRole::Admin {
+        return candidates;
+    }
+    for candidate in &mut candidates {
+        candidate.populated_fields.retain(|field| {
+            !matches!(
+                field,
+                protocol::BusinessWorkspacePrefillField::SupplierBankName
+                    | protocol::BusinessWorkspacePrefillField::SupplierBankAccount
+            )
+        });
+    }
+    candidates
+}
+
+fn filter_business_prefill_preview_for_role(
+    mut preview: BusinessWorkspacePrefillPreview,
+    role: protocol::AppUserRole,
+) -> BusinessWorkspacePrefillPreview {
+    if role == protocol::AppUserRole::Admin {
+        return preview;
+    }
+    preview.changes.retain(|change| {
+        !matches!(
+            change.field,
+            protocol::BusinessWorkspacePrefillField::SupplierBankName
+                | protocol::BusinessWorkspacePrefillField::SupplierBankAccount
+        )
+    });
+    preview
 }
 
 fn business_workspace_command_context(
@@ -818,6 +1327,8 @@ fn business_workspace_command_context(
         | BusinessWorkspaceCommandEnvelope::ChangeDocumentStatus { context, .. }
         | BusinessWorkspaceCommandEnvelope::GenerateDocument { context, .. }
         | BusinessWorkspaceCommandEnvelope::UpsertPayment { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch { context, .. }
+        | BusinessWorkspaceCommandEnvelope::VoidSettlementBatch { context, .. }
         | BusinessWorkspaceCommandEnvelope::ConfirmQuote { context, .. }
         | BusinessWorkspaceCommandEnvelope::RecordReceipt { context, .. }
         | BusinessWorkspaceCommandEnvelope::ReverseReceipt { context, .. }
@@ -825,6 +1336,9 @@ fn business_workspace_command_context(
         | BusinessWorkspaceCommandEnvelope::UpsertCustomer { context, .. }
         | BusinessWorkspaceCommandEnvelope::AssignCustomer { context, .. }
         | BusinessWorkspaceCommandEnvelope::UpsertMilestone { context, .. }
+        | BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { context, .. }
+        | BusinessWorkspaceCommandEnvelope::PrepareAcceptanceDocuments { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial { context, .. }
         | BusinessWorkspaceCommandEnvelope::RegisterDeliverableVersion { context, .. }
         | BusinessWorkspaceCommandEnvelope::RecordDeliverySent { context, .. }
         | BusinessWorkspaceCommandEnvelope::RecordDeliverySignoff { context, .. }
@@ -832,7 +1346,371 @@ fn business_workspace_command_context(
         | BusinessWorkspaceCommandEnvelope::RecordInvoiceRedCorrection { context, .. }
         | BusinessWorkspaceCommandEnvelope::AttachInvoiceAsset { context, .. }
         | BusinessWorkspaceCommandEnvelope::CreateArchiveSnapshot { context, .. }
+        | BusinessWorkspaceCommandEnvelope::NormalizeLegacyTemplate { context, .. }
+        | BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RejectTemplateVersion { context, .. }
         | BusinessWorkspaceCommandEnvelope::ChangeStatus { context, .. } => context,
+    }
+}
+
+fn business_workspace_command_context_mut(
+    command: &mut BusinessWorkspaceCommandEnvelope,
+) -> &mut OperationContext {
+    match command {
+        BusinessWorkspaceCommandEnvelope::Create { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpdateProfile { context, .. }
+        | BusinessWorkspaceCommandEnvelope::CreateDocument { context, .. }
+        | BusinessWorkspaceCommandEnvelope::PromoteReviewedContract { context, .. }
+        | BusinessWorkspaceCommandEnvelope::ChangeDocumentStatus { context, .. }
+        | BusinessWorkspaceCommandEnvelope::GenerateDocument { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertPayment { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch { context, .. }
+        | BusinessWorkspaceCommandEnvelope::VoidSettlementBatch { context, .. }
+        | BusinessWorkspaceCommandEnvelope::ConfirmQuote { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RecordReceipt { context, .. }
+        | BusinessWorkspaceCommandEnvelope::ReverseReceipt { context, .. }
+        | BusinessWorkspaceCommandEnvelope::AdoptLatestConfirmedRequirement { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertCustomer { context, .. }
+        | BusinessWorkspaceCommandEnvelope::AssignCustomer { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertMilestone { context, .. }
+        | BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch { context, .. }
+        | BusinessWorkspaceCommandEnvelope::PrepareAcceptanceDocuments { context, .. }
+        | BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RegisterDeliverableVersion { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RecordDeliverySent { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RecordDeliverySignoff { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RecordInvoiceIssued { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RecordInvoiceRedCorrection { context, .. }
+        | BusinessWorkspaceCommandEnvelope::AttachInvoiceAsset { context, .. }
+        | BusinessWorkspaceCommandEnvelope::CreateArchiveSnapshot { context, .. }
+        | BusinessWorkspaceCommandEnvelope::NormalizeLegacyTemplate { context, .. }
+        | BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion { context, .. }
+        | BusinessWorkspaceCommandEnvelope::RejectTemplateVersion { context, .. }
+        | BusinessWorkspaceCommandEnvelope::ChangeStatus { context, .. } => context,
+    }
+}
+
+#[cfg(test)]
+mod business_workspace_command_context_tests {
+    use super::*;
+
+    #[test]
+    fn member_command_matrix_matches_the_host_policy() {
+        let cases = [
+            ("businessWorkspace.create", protocol::AppUserRole::Member),
+            (
+                "businessWorkspace.updateProfile",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.createDocument",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.promoteReviewedContract",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.changeDocumentStatus",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.generateDocument",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.upsertPayment",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.confirmQuote",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.recordReceipt",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.reverseReceipt",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.adoptLatestConfirmedRequirement",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.upsertCustomer",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.assignCustomer",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.upsertMilestone",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.createAcceptanceBatch",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.prepareAcceptanceDocuments",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.upsertAcceptanceMaterial",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.registerDeliverableVersion",
+                protocol::AppUserRole::Member,
+            ),
+            (
+                "businessWorkspace.recordDeliverySent",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.recordDeliverySignoff",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.recordInvoiceIssued",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.recordInvoiceRedCorrection",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.attachInvoiceAsset",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.createArchiveSnapshot",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.normalizeLegacyTemplate",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.approveTemplateVersion",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.rejectTemplateVersion",
+                protocol::AppUserRole::Admin,
+            ),
+            (
+                "businessWorkspace.changeStatus",
+                protocol::AppUserRole::Admin,
+            ),
+        ];
+
+        for (command_type, expected_role) in cases {
+            assert_eq!(
+                business_workspace_command_role_policy(command_type),
+                Some(expected_role),
+                "unexpected policy for {command_type}"
+            );
+        }
+        assert_eq!(business_workspace_command_role_policy("unknown"), None);
+    }
+
+    #[test]
+    fn mutable_context_overrides_client_identity() {
+        let mut command = BusinessWorkspaceCommandEnvelope::Create {
+            command_id: "command-1".to_string(),
+            protocol_version: "1".to_string(),
+            context: OperationContext {
+                actor_id: "forged-admin".to_string(),
+                account_id: Some("forged-account".to_string()),
+                project_id: Some("project-1".to_string()),
+                window_id: "window-1".to_string(),
+                trace_id: "trace-1".to_string(),
+            },
+            payload: protocol::CreateBusinessWorkspacePayload {
+                project_id: "project-1".to_string(),
+                customer_id: None,
+                prefill_source_workspace_id: None,
+            },
+            idempotency_key: "idempotency-1".to_string(),
+            expected_revision: None,
+            deadline_at: None,
+        };
+
+        let principal = auth_service::AuthPrincipal {
+            username: "authenticated-admin".to_string(),
+            role: protocol::AppUserRole::Admin,
+        };
+        bind_authenticated_context(
+            business_workspace_command_context_mut(&mut command),
+            &principal,
+        );
+
+        let context = business_workspace_command_context(&command);
+        assert_eq!(context.actor_id, "authenticated-admin");
+        assert_eq!(context.account_id.as_deref(), Some("authenticated-admin"));
+        assert_eq!(context.project_id.as_deref(), Some("project-1"));
+    }
+
+    #[test]
+    fn member_sensitive_fields_are_cleared_without_changing_shape() {
+        let mut profile = protocol::BusinessProfile {
+            supplier_bank_name: "Sensitive Bank".to_string(),
+            supplier_bank_account: "6222000000000000".to_string(),
+            ..protocol::BusinessProfile::default()
+        };
+        redact_business_profile_for_member(&mut profile);
+        assert!(profile.supplier_bank_name.is_empty());
+        assert!(profile.supplier_bank_account.is_empty());
+
+        let mut payment_application = Some(protocol::BusinessPaymentApplicationData {
+            payment_id: "payment-1".to_string(),
+            contract_title: "Contract".to_string(),
+            contract_number: "HT-1".to_string(),
+            work_summary: "Work".to_string(),
+            payment_period_start: "2026-07-01".to_string(),
+            payment_period_end: "2026-07-31".to_string(),
+            settlement_period: "2026-07".to_string(),
+            payment_sequence: 1,
+            invoice_amount_cents: 100,
+            cumulative_recognized_amount_cents: 100,
+            withheld_amount_cents: 0,
+            cumulative_paid_cents: 0,
+            settlement_total_cents: 100,
+            remaining_payable_cents: 100,
+            application_date: "2026-07-29".to_string(),
+            bank_account_profile_version: "secret-version".to_string(),
+            supplier_bank_routing_number: "secret-routing".to_string(),
+            settlement_items: Vec::new(),
+        });
+        redact_payment_application_for_member(&mut payment_application);
+        let payment_application = payment_application.expect("payment application remains present");
+        assert!(payment_application.bank_account_profile_version.is_empty());
+        assert!(payment_application.supplier_bank_routing_number.is_empty());
+    }
+
+    #[test]
+    fn member_prefill_filters_bank_fields_and_changes() {
+        let candidates = vec![BusinessWorkspacePrefillCandidate {
+            source_workspace_id: "workspace-1".to_string(),
+            source_project_id: "project-1".to_string(),
+            source_project_title: "Project".to_string(),
+            customer_name: "Customer".to_string(),
+            customer_legal_name: "Customer Ltd".to_string(),
+            supplier_legal_name: "Supplier Ltd".to_string(),
+            match_kind: protocol::BusinessWorkspacePrefillMatchKind::Both,
+            populated_fields: vec![
+                protocol::BusinessWorkspacePrefillField::SupplierBankName,
+                protocol::BusinessWorkspacePrefillField::SupplierBankAccount,
+                protocol::BusinessWorkspacePrefillField::Currency,
+            ],
+            status: protocol::BusinessWorkspaceStatus::Active,
+            source_revision: 1,
+            source_updated_at: 2,
+        }];
+        let candidates =
+            filter_business_prefill_candidates_for_role(candidates, protocol::AppUserRole::Member);
+        assert_eq!(
+            candidates[0].populated_fields,
+            vec![protocol::BusinessWorkspacePrefillField::Currency]
+        );
+
+        let preview = BusinessWorkspacePrefillPreview {
+            target_project_id: "target-project".to_string(),
+            target_project_title: "Target".to_string(),
+            target_customer_name: "Customer".to_string(),
+            target_requirement_brief_id: None,
+            source_workspace_id: "workspace-1".to_string(),
+            source_project_id: "project-1".to_string(),
+            source_project_title: "Source".to_string(),
+            match_kind: protocol::BusinessWorkspacePrefillMatchKind::Both,
+            source_revision: 1,
+            source_updated_at: 2,
+            changes: vec![
+                protocol::BusinessWorkspacePrefillChange {
+                    field: protocol::BusinessWorkspacePrefillField::SupplierBankName,
+                    target_value: "old bank".to_string(),
+                    source_value: "secret bank".to_string(),
+                    result_value: "secret bank".to_string(),
+                    decision: protocol::BusinessWorkspacePrefillDecision::Replaced,
+                },
+                protocol::BusinessWorkspacePrefillChange {
+                    field: protocol::BusinessWorkspacePrefillField::Currency,
+                    target_value: "".to_string(),
+                    source_value: "CNY".to_string(),
+                    result_value: "CNY".to_string(),
+                    decision: protocol::BusinessWorkspacePrefillDecision::Filled,
+                },
+            ],
+        };
+        let preview =
+            filter_business_prefill_preview_for_role(preview, protocol::AppUserRole::Member);
+        assert_eq!(preview.changes.len(), 1);
+        assert_eq!(
+            preview.changes[0].field,
+            protocol::BusinessWorkspacePrefillField::Currency
+        );
+    }
+}
+
+#[cfg(test)]
+mod authentication_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn authenticated_context_always_replaces_forged_actor_and_account() {
+        let mut context = OperationContext {
+            actor_id: "forged-admin".to_string(),
+            account_id: Some("forged-account".to_string()),
+            project_id: Some("project-1".to_string()),
+            window_id: "window-1".to_string(),
+            trace_id: "trace-1".to_string(),
+        };
+        let principal = auth_service::AuthPrincipal {
+            username: "member".to_string(),
+            role: protocol::AppUserRole::Member,
+        };
+
+        bind_authenticated_context(&mut context, &principal);
+
+        assert_eq!(context.actor_id, "member");
+        assert_eq!(context.account_id.as_deref(), Some("member"));
+        assert_eq!(context.project_id.as_deref(), Some("project-1"));
+    }
+
+    #[test]
+    fn project_envelope_is_rebound_before_host_execution() {
+        let mut command = CommandEnvelope::ProjectCreate {
+            command_id: "command-1".to_string(),
+            protocol_version: "1".to_string(),
+            context: OperationContext {
+                actor_id: "forged-admin".to_string(),
+                account_id: Some("forged-account".to_string()),
+                project_id: None,
+                window_id: "window-1".to_string(),
+                trace_id: "trace-1".to_string(),
+            },
+            payload: protocol::CreateProjectPayload {
+                name: "Project".to_string(),
+                client_name: "Client".to_string(),
+            },
+            idempotency_key: "idempotency-1".to_string(),
+            expected_revision: None,
+            deadline_at: None,
+        };
+        let principal = auth_service::AuthPrincipal {
+            username: "member".to_string(),
+            role: protocol::AppUserRole::Member,
+        };
+
+        bind_authenticated_context(project_command_context_mut(&mut command), &principal);
+
+        let context = project_command_context_mut(&mut command);
+        assert_eq!(context.actor_id, "member");
+        assert_eq!(context.account_id.as_deref(), Some("member"));
     }
 }
 
@@ -867,8 +1745,9 @@ fn queue_assets_for_backup<'a>(
 fn list_business_workspaces(
     state: State<'_, AppState>,
 ) -> Result<Vec<BusinessWorkspaceRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "businessWorkspace.read",
         "businessWorkspace",
         None,
@@ -879,7 +1758,11 @@ fn list_business_workspaces(
         .asset_connection
         .lock()
         .map_err(|_| HostError::internal("domain SQLite lock is poisoned"))?;
-    business_workspace_service::list(&connection)
+    let workspaces = business_workspace_service::list(&connection)?;
+    Ok(workspaces
+        .into_iter()
+        .map(|workspace| filter_business_workspace_for_role(workspace, principal.role))
+        .collect())
 }
 
 #[tauri::command]
@@ -887,8 +1770,9 @@ fn list_business_customers(
     state: State<'_, AppState>,
     request: ListBusinessCustomersRequest,
 ) -> Result<Vec<BusinessCustomerReceivableSummary>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "businessWorkspace.read",
         "businessCustomer",
         None,
@@ -907,8 +1791,9 @@ fn list_business_workspace_prefill_candidates(
     state: State<'_, AppState>,
     request: ListBusinessWorkspacePrefillCandidatesRequest,
 ) -> Result<Vec<BusinessWorkspacePrefillCandidate>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "businessWorkspace.read",
         "businessWorkspace",
         Some(request.target_project_id.as_str()),
@@ -919,7 +1804,11 @@ fn list_business_workspace_prefill_candidates(
         .asset_connection
         .lock()
         .map_err(|_| HostError::internal("domain SQLite lock is poisoned"))?;
-    business_workspace_service::list_prefill_candidates(&connection, &request)
+    let candidates = business_workspace_service::list_prefill_candidates(&connection, &request)?;
+    Ok(filter_business_prefill_candidates_for_role(
+        candidates,
+        principal.role,
+    ))
 }
 
 #[tauri::command]
@@ -927,8 +1816,9 @@ fn preview_business_workspace_prefill(
     state: State<'_, AppState>,
     request: PreviewBusinessWorkspacePrefillRequest,
 ) -> Result<BusinessWorkspacePrefillPreview, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "businessWorkspace.read",
         "businessWorkspace",
         Some(request.target_project_id.as_str()),
@@ -939,7 +1829,11 @@ fn preview_business_workspace_prefill(
         .asset_connection
         .lock()
         .map_err(|_| HostError::internal("domain SQLite lock is poisoned"))?;
-    business_workspace_service::preview_prefill(&connection, &request)
+    let preview = business_workspace_service::preview_prefill(&connection, &request)?;
+    Ok(filter_business_prefill_preview_for_role(
+        preview,
+        principal.role,
+    ))
 }
 
 #[tauri::command]
@@ -947,8 +1841,9 @@ fn replay_business_workspace_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<BusinessWorkspaceDomainEvent>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "businessWorkspace.read",
         "businessWorkspace",
         None,
@@ -993,6 +1888,20 @@ fn authorize_business_workspace_command(
         } => (
             context.actor_id.as_str(),
             "businessWorkspace.write",
+            payload.workspace_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::UpsertSettlementBatch {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.write",
+            payload.workspace_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::VoidSettlementBatch {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.approve",
             payload.workspace_id.as_str(),
         ),
         BusinessWorkspaceCommandEnvelope::ConfirmQuote {
@@ -1040,6 +1949,27 @@ fn authorize_business_workspace_command(
             payload.workspace_id.as_str(),
         ),
         BusinessWorkspaceCommandEnvelope::UpsertMilestone {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.write",
+            payload.workspace_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::CreateAcceptanceBatch {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.write",
+            payload.workspace_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::PrepareAcceptanceDocuments {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.write",
+            payload.workspace_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::UpsertAcceptanceMaterial {
             context, payload, ..
         } => (
             context.actor_id.as_str(),
@@ -1095,6 +2025,27 @@ fn authorize_business_workspace_command(
             "businessWorkspace.approve",
             payload.workspace_id.as_str(),
         ),
+        BusinessWorkspaceCommandEnvelope::NormalizeLegacyTemplate {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.write",
+            payload.workspace_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.approve",
+            payload.template_version_id.as_str(),
+        ),
+        BusinessWorkspaceCommandEnvelope::RejectTemplateVersion {
+            context, payload, ..
+        } => (
+            context.actor_id.as_str(),
+            "businessWorkspace.approve",
+            payload.template_version_id.as_str(),
+        ),
         BusinessWorkspaceCommandEnvelope::ChangeStatus {
             context, payload, ..
         } => (
@@ -1133,10 +2084,17 @@ fn authorize_business_workspace_command(
     } else {
         security::OperationEffect::ReversibleWrite
     };
+    let resource_type = match command {
+        BusinessWorkspaceCommandEnvelope::ApproveTemplateVersion { .. }
+        | BusinessWorkspaceCommandEnvelope::RejectTemplateVersion { .. } => {
+            "businessTemplateVersion"
+        }
+        _ => "businessWorkspace",
+    };
     ensure_allowed(host.authorize_operation(
         actor_id,
         operation,
-        "businessWorkspace",
+        resource_type,
         Some(resource_id),
         effect,
         None,
@@ -1146,8 +2104,10 @@ fn authorize_business_workspace_command(
 #[tauri::command]
 fn execute_ai_credential_command(
     state: State<'_, AppState>,
-    command: AiCredentialCommandEnvelope,
+    mut command: AiCredentialCommandEnvelope,
 ) -> Result<AiCredentialCommandResponse, HostError> {
+    let principal = state.auth.require_active_admin()?;
+    bind_authenticated_context(ai_credential_command_context_mut(&mut command), &principal);
     let (actor_id, operation, resource_id, effect, refresh_runtime) = match &command {
         AiCredentialCommandEnvelope::Status { context, .. } => (
             context.actor_id.as_str(),
@@ -1243,8 +2203,13 @@ fn execute_ai_credential_command(
 #[tauri::command]
 fn execute_desktop_settings_command(
     state: State<'_, AppState>,
-    command: DesktopSettingsCommandEnvelope,
+    mut command: DesktopSettingsCommandEnvelope,
 ) -> Result<DesktopSettingsCommandResponse, HostError> {
+    let principal = state.auth.require_active_admin()?;
+    bind_authenticated_context(
+        desktop_settings_command_context_mut(&mut command),
+        &principal,
+    );
     let (context, operation, effect) = match &command {
         DesktopSettingsCommandEnvelope::Status { context, .. } => {
             (context, "settings.read", security::OperationEffect::Read)
@@ -1280,8 +2245,13 @@ fn execute_desktop_settings_command(
 fn execute_contract_review_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: ContractReviewCommandEnvelope,
+    mut command: ContractReviewCommandEnvelope,
 ) -> Result<ContractReviewCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    bind_authenticated_context(
+        contract_review_command_context_mut(&mut command),
+        &principal,
+    );
     authorize_contract_review_command(&state.host, &command)?;
     let mut connection = state
         .asset_connection
@@ -1316,8 +2286,9 @@ fn get_contract_review(
     state: State<'_, AppState>,
     request: GetContractReviewRequest,
 ) -> Result<ContractReviewRecord, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "contractReview.read",
         "contractReview",
         Some(request.review_id.as_str()),
@@ -1336,8 +2307,9 @@ fn list_contract_reviews(
     state: State<'_, AppState>,
     request: ListContractReviewsRequest,
 ) -> Result<Vec<ContractReviewRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "contractReview.read",
         "contractReview",
         request.workspace_id.as_deref(),
@@ -1356,8 +2328,9 @@ fn list_review_findings(
     state: State<'_, AppState>,
     request: ListReviewFindingsRequest,
 ) -> Result<Vec<ReviewFindingRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "contractReview.read",
         "contractReview",
         Some(request.review_id.as_str()),
@@ -1376,8 +2349,9 @@ fn get_evidence_context(
     state: State<'_, AppState>,
     request: GetEvidenceContextRequest,
 ) -> Result<EvidenceContext, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "contractReview.readEvidence",
         "contractEvidence",
         Some(request.evidence_id.as_str()),
@@ -1396,8 +2370,9 @@ fn replay_contract_review_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<ContractReviewDomainEvent>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "contractReview.read",
         "contractReview",
         None,
@@ -1473,8 +2448,10 @@ fn authorize_contract_review_command(
 fn execute_backup_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: BackupCommandEnvelope,
+    mut command: BackupCommandEnvelope,
 ) -> Result<BackupCommandResponse, HostError> {
+    let principal = state.auth.require_active_admin()?;
+    bind_authenticated_context(backup_command_context_mut(&mut command), &principal);
     authorize_backup_command(&state.host, &command)?;
     if matches!(&command, BackupCommandEnvelope::Restore { .. }) {
         let outcome = state.backup_worker.restore(command)?;
@@ -1518,8 +2495,9 @@ fn list_asset_backups(
     state: State<'_, AppState>,
     limit: Option<u32>,
 ) -> Result<Vec<AssetBackupRecord>, HostError> {
+    let principal = state.auth.require_active_admin()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "backup.read",
         "assetBackup",
         None,
@@ -1534,8 +2512,9 @@ fn replay_backup_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<BackupDomainEvent>, HostError> {
+    let principal = state.auth.require_active_admin()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "backup.read",
         "assetBackup",
         None,
@@ -1579,8 +2558,13 @@ fn authorize_backup_command(
 fn execute_execution_brief_command(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    command: ExecutionBriefCommandEnvelope,
+    mut command: ExecutionBriefCommandEnvelope,
 ) -> Result<ExecutionBriefCommandResponse, HostError> {
+    let principal = state.auth.require_active_principal()?;
+    bind_authenticated_context(
+        execution_brief_command_context_mut(&mut command),
+        &principal,
+    );
     let mut connection = state
         .asset_connection
         .lock()
@@ -1594,6 +2578,7 @@ fn execute_execution_brief_command(
 fn list_execution_briefs(
     state: State<'_, AppState>,
 ) -> Result<Vec<ExecutionBriefRecord>, HostError> {
+    state.auth.require_active_principal()?;
     let connection = state
         .asset_connection
         .lock()
@@ -1606,6 +2591,7 @@ fn replay_execution_brief_events(
     state: State<'_, AppState>,
     request: ReplayEventsRequest,
 ) -> Result<Vec<ExecutionBriefDomainEvent>, HostError> {
+    state.auth.require_active_principal()?;
     let connection = state
         .asset_connection
         .lock()
@@ -1618,6 +2604,7 @@ fn report_diagnostic(
     state: State<'_, AppState>,
     payload: DiagnosticReportPayload,
 ) -> Result<DiagnosticRecord, HostError> {
+    state.auth.require_active_admin()?;
     state.diagnostics.report(payload)
 }
 
@@ -1626,6 +2613,7 @@ fn list_diagnostics(
     state: State<'_, AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<DiagnosticRecord>, HostError> {
+    state.auth.require_active_admin()?;
     state.diagnostics.list_queued(limit.unwrap_or(100))
 }
 
@@ -1635,8 +2623,9 @@ fn upsert_memory(
     record: MemoryRecord,
     expected_revision: Option<i64>,
 ) -> Result<MemoryRecord, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "memory.put",
         "memory",
         Some(&record.id),
@@ -1658,8 +2647,9 @@ fn list_memories(
     offset: Option<i64>,
     limit: Option<i64>,
 ) -> Result<Vec<MemoryRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "memory.list",
         "memory",
         scope_id.as_deref(),
@@ -1683,8 +2673,9 @@ fn search_memories(
     offset: Option<i64>,
     limit: Option<i64>,
 ) -> Result<Vec<MemoryRecord>, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "memory.search",
         "memory",
         scope_id.as_deref(),
@@ -1706,8 +2697,9 @@ fn delete_memory(
     expected_revision: i64,
     approval_id: Option<String>,
 ) -> Result<MemoryRecord, HostError> {
+    let principal = state.auth.require_active_principal()?;
     ensure_allowed(state.host.authorize_operation(
-        "local-operator",
+        &principal.username,
         "memory.delete",
         "memory",
         Some(&id),
@@ -1726,6 +2718,7 @@ async fn brain_thread_start(
     state: State<'_, AppState>,
     request: StartBrainThreadRequest,
 ) -> Result<BrainThreadRecord, HostError> {
+    state.auth.require_active_principal()?;
     let brain = state.brain.clone();
     run_brain(move || brain.start_thread(request)).await
 }
@@ -1735,6 +2728,7 @@ async fn brain_thread_resume(
     state: State<'_, AppState>,
     request: ResumeBrainThreadRequest,
 ) -> Result<BrainThreadRecord, HostError> {
+    state.auth.require_active_principal()?;
     let brain = state.brain.clone();
     run_brain(move || brain.resume_thread(request)).await
 }
@@ -1744,6 +2738,7 @@ async fn brain_thread_list_remote(
     state: State<'_, AppState>,
     request: ListRemoteBrainThreadsRequest,
 ) -> Result<RemoteBrainThreadPage, HostError> {
+    state.auth.require_active_principal()?;
     let brain = state.brain.clone();
     run_brain(move || brain.list_remote_threads(request)).await
 }
@@ -1754,6 +2749,7 @@ async fn brain_turn_start(
     request: StartBrainTurnRequest,
     context: Option<BrainTurnContext>,
 ) -> Result<BrainTurnStartResult, HostError> {
+    state.auth.require_active_principal()?;
     let context = context.unwrap_or_default();
     if context.attachment_asset_ids.len() > 20 {
         return Err(HostError::validation("attach at most 20 files to one turn"));
@@ -1787,6 +2783,7 @@ async fn brain_turn_start(
     let execution_context = BrainExecutionContext {
         workspace_root,
         access_mode: context.access_mode,
+        web_enabled: context.web_enabled.unwrap_or(false),
         attachments,
     };
     let brain = state.brain.clone();
@@ -1798,6 +2795,7 @@ async fn brain_turn_interrupt(
     state: State<'_, AppState>,
     request: InterruptBrainTurnRequest,
 ) -> Result<BrainTurnRecord, HostError> {
+    state.auth.require_active_principal()?;
     let brain = state.brain.clone();
     run_brain(move || brain.interrupt_turn(request)).await
 }
@@ -1807,6 +2805,7 @@ fn brain_list_local_threads(
     state: State<'_, AppState>,
     project_id: Option<String>,
 ) -> Result<Vec<BrainThreadRecord>, HostError> {
+    state.auth.require_active_principal()?;
     state.brain.list_local_threads(project_id.as_deref())
 }
 
@@ -1816,6 +2815,7 @@ fn brain_thread_archive(
     thread_id: String,
     archived: bool,
 ) -> Result<BrainThreadRecord, HostError> {
+    state.auth.require_active_principal()?;
     state.brain.archive_local_thread(&thread_id, archived)
 }
 
@@ -1825,11 +2825,13 @@ fn brain_thread_rename(
     thread_id: String,
     title: String,
 ) -> Result<BrainThreadRecord, HostError> {
+    state.auth.require_active_principal()?;
     state.brain.rename_local_thread(&thread_id, &title)
 }
 
 #[tauri::command]
 fn brain_thread_delete(state: State<'_, AppState>, thread_id: String) -> Result<(), HostError> {
+    state.auth.require_active_admin()?;
     state.brain.delete_local_thread(&thread_id)
 }
 
@@ -1838,18 +2840,21 @@ fn brain_list_local_turns(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<Vec<BrainTurnRecord>, HostError> {
+    state.auth.require_active_principal()?;
     state.brain.list_local_turns(&thread_id)
 }
 
 #[tauri::command]
-fn get_brain_health(state: State<'_, AppState>) -> BrainHostHealth {
-    state.brain.health()
+fn get_brain_health(state: State<'_, AppState>) -> Result<BrainHostHealth, HostError> {
+    state.auth.require_active_principal()?;
+    Ok(state.brain.health())
 }
 
 #[tauri::command]
-fn get_native_media_health(state: State<'_, AppState>) -> NativeMediaHealth {
+fn get_native_media_health(state: State<'_, AppState>) -> Result<NativeMediaHealth, HostError> {
+    state.auth.require_active_principal()?;
     let health = state.media_engine.health();
-    NativeMediaHealth {
+    Ok(NativeMediaHealth {
         state: if health.ffmpeg_available && health.ffprobe_available {
             "ready"
         } else if health.ffmpeg_available || health.ffprobe_available {
@@ -1862,7 +2867,7 @@ fn get_native_media_health(state: State<'_, AppState>) -> NativeMediaHealth {
         ffprobe_available: health.ffprobe_available,
         ffmpeg_source: health.ffmpeg_source.map(media_tool_source_name),
         ffprobe_source: health.ffprobe_source.map(media_tool_source_name),
-    }
+    })
 }
 
 fn media_tool_source_name(source: MediaToolSource) -> String {
@@ -1938,11 +2943,13 @@ fn ensure_allowed(decision: protocol::PermissionDecision) -> Result<(), HostErro
 
 #[tauri::command]
 fn get_host_status(state: State<'_, AppState>) -> Result<HostStatus, HostError> {
+    state.auth.require_active_principal()?;
     state.host.status()
 }
 
 #[tauri::command]
 fn list_pending_approvals(state: State<'_, AppState>) -> Result<Vec<ApprovalRecord>, HostError> {
+    state.auth.require_active_admin()?;
     state.host.list_pending_approvals()
 }
 
@@ -1951,11 +2958,13 @@ fn resolve_approval(
     state: State<'_, AppState>,
     payload: ResolveApprovalPayload,
 ) -> Result<ApprovalRecord, HostError> {
-    state.host.resolve_approval(&payload)
+    let principal = state.auth.require_active_admin()?;
+    state.host.resolve_approval(&principal.username, &payload)
 }
 
 #[tauri::command]
-async fn probe_codex() -> Result<CodexProbeStatus, HostError> {
+async fn probe_codex(state: State<'_, AppState>) -> Result<CodexProbeStatus, HostError> {
+    state.auth.require_active_principal()?;
     tauri::async_runtime::spawn_blocking(codex_host::probe_codex)
         .await
         .map_err(|error| HostError::internal(format!("Codex 探测任务失败: {error}")))
@@ -2021,11 +3030,14 @@ pub fn run() {
                 eprintln!("asset import startup reconciliation deferred: {error}");
             }
             case_library::migrate(&asset_connection).map_err(|error| error.to_string())?;
+            shared_case_service::migrate(&asset_connection).map_err(|error| error.to_string())?;
             requirement_brief_service::migrate(&asset_connection)
                 .map_err(|error| error.to_string())?;
             execution_brief_service::migrate(&asset_connection)
                 .map_err(|error| error.to_string())?;
             business_workspace_service::migrate(&asset_connection)
+                .map_err(|error| error.to_string())?;
+            brain_workspace_registry::migrate(&asset_connection)
                 .map_err(|error| error.to_string())?;
             contract_review_service::migrate(&asset_connection)
                 .map_err(|error| error.to_string())?;
@@ -2047,6 +3059,10 @@ pub fn run() {
                 Arc::new(move |events| {
                     emit_after_commit(&backup_event_app, BACKUP_EVENT_CHANNEL, events)
                 }),
+            );
+            desktop_settings.set_r2_runtime_status(
+                backup_worker.is_ready(),
+                backup_worker.degraded_reason().map(str::to_string),
             );
             if let Some(reason) = backup_worker.degraded_reason() {
                 eprintln!("R2 backup sidecar degraded: {reason}");
@@ -2189,6 +3205,7 @@ pub fn run() {
             auth_login,
             auth_logout,
             auth_remembered_credentials,
+            auth_login_remembered,
             auth_remember_credentials,
             auth_forget_credentials,
             auth_change_password,
@@ -2206,6 +3223,9 @@ pub fn run() {
             select_asset_source,
             select_asset_sources,
             select_brain_workspace,
+            bind_brain_project_workspace,
+            list_brain_project_workspaces,
+            unbind_brain_project_workspace,
             register_brain_dropped_paths,
             stage_clipboard_image,
             get_brain_attachment_preview,
@@ -2218,6 +3238,9 @@ pub fn run() {
             execute_case_command,
             list_cases,
             replay_case_events,
+            execute_shared_case_command,
+            list_authorized_shared_cases,
+            replay_shared_case_events,
             execute_requirement_brief_command,
             list_requirement_briefs,
             replay_requirement_brief_events,
@@ -2265,5 +3288,5 @@ pub fn run() {
             probe_codex
         ])
         .run(tauri::generate_context!())
-        .expect("error while running BSAIGC desktop application");
+        .expect("error while running Huabang Business System desktop application");
 }

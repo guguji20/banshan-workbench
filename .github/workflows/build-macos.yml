@@ -1,85 +1,334 @@
-# 云端自动打包 Mac 安装包（苹果 M 系列芯片）。打完自动上传到你的 R2 发布桶。
-# 触发方式：GitHub 网页上手动点「Run workflow」。
-name: 打包 Mac 安装包
+# macOS ARM64 正式发布门禁证据：仅构建、签名、公证、烟测和校验，不负责分发。
+name: macOS 1.0 正式发布门禁证据
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-gate-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
+  MACOS_TARGET: aarch64-apple-darwin
+  CODEX_NPM_VERSION: 0.144.5
+  CARGO_BUILD_JOBS: 1
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_INCREMENTAL: 0
   R2_ENDPOINT: https://0f98b7eaabb1ca07dadca32e7e34ddb0.r2.cloudflarestorage.com
   PUBLIC_BASE: https://pub-ec88f35bbc9845e098c534da6f88fdfc.r2.dev
-  AWS_ACCESS_KEY_ID: ${{ secrets.R2_S3_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_S3_SECRET_ACCESS_KEY }}
-  AWS_DEFAULT_REGION: auto
-  CODEX_NPM_VERSION: 0.144.5
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    name: 构建、签名、公证和烟测
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: macos-release
     steps:
-      - name: 拉取代码
+      - name: 拉取固定提交
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: 准备 pnpm
+      - name: 校验 runner、版本和必要 secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CODEX_DARWIN_ARM64_SHA256: ${{ secrets.CODEX_DARWIN_ARM64_SHA256 }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID CODEX_DARWIN_ARM64_SHA256; do
+            test -n "${!name:-}" || { echo "Missing required secret: $name" >&2; exit 1; }
+          done
+          test "${#CODEX_DARWIN_ARM64_SHA256}" -eq 64
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO_VERSION="$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          test "$PACKAGE_VERSION" = "$TAURI_VERSION"
+          test "$PACKAGE_VERSION" = "$CARGO_VERSION"
+
+      - name: 准备 pnpm、Node 和 Rust
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - name: 准备 Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: 准备 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 下载官方 Codex 引擎（Mac 版，与 Windows 同一锁定版本）
-        run: |
-          set -euo pipefail
-          curl -fsSL -o codex-darwin.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_NPM_VERSION}-darwin-arm64.tgz"
-          shasum -a 256 codex-darwin.tgz
-          tar -xzf codex-darwin.tgz
-          VENDOR="package/vendor/aarch64-apple-darwin"
-          test -f "$VENDOR/bin/codex"
-          install -m 755 "$VENDOR/bin/codex" src-tauri/resources/codex-runtime/codex
-          if [ -f "$VENDOR/path/rg" ]; then
-            mkdir -p src-tauri/resources/codex-runtime/codex-path
-            install -m 755 "$VENDOR/path/rg" src-tauri/resources/codex-runtime/codex-path/rg
-            install -m 755 "$VENDOR/path/rg" src-tauri/resources/codex-runtime/rg
-          fi
-          src-tauri/resources/codex-runtime/codex --version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
 
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
 
-      - name: 准备运行时 R2 配置
-        run: >-
-          node -e 'const fs=require("fs");fs.writeFileSync("src-tauri/resources/r2.config.json",JSON.stringify({accountId:"0f98b7eaabb1ca07dadca32e7e34ddb0",bucket:"banshan-backup",accessKeyId:process.env.AWS_ACCESS_KEY_ID,secretAccessKey:process.env.AWS_SECRET_ACCESS_KEY,endpoint:process.env.R2_ENDPOINT,updateManifestUrl:process.env.PUBLIC_BASE+"/version-mac.json"},null,2)+"\n")'
-
-      - name: 打包安装包
+      - name: 下载并校验官方 Codex ARM64 运行时
         env:
-          BSAIGC_INTERNAL_API_KEY: ${{ secrets.BSAIGC_INTERNAL_API_KEY }}
-        run: pnpm tauri build --bundles dmg
-
-      - name: 读取版本号
-        id: ver
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: 上传安装包与版本信息到 R2
+          CODEX_DARWIN_ARM64_SHA256: ${{ secrets.CODEX_DARWIN_ARM64_SHA256 }}
         run: |
           set -euo pipefail
-          command -v aws >/dev/null 2>&1 || brew install awscli
-          aws configure set default.s3.addressing_style path
-          VER="${{ steps.ver.outputs.version }}"
-          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
-          NAME="banshan-workbench-${VER}-mac.dmg"
-          aws s3 cp "$DMG" "s3://banshan-releases/$NAME" --endpoint-url "$R2_ENDPOINT"
-          printf '{"version":"%s","url":"%s/%s","notes":"Mac 版 %s"}\n' "$VER" "$PUBLIC_BASE" "$NAME" "$VER" > version-mac.json
-          aws s3 cp version-mac.json "s3://banshan-releases/version-mac.json" --endpoint-url "$R2_ENDPOINT" --content-type application/json
+          URL="https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_NPM_VERSION}-darwin-arm64.tgz"
+          curl --fail --location --retry 3 --retry-all-errors --output codex-darwin.tgz "$URL"
+          printf '%s  %s\n' "$CODEX_DARWIN_ARM64_SHA256" codex-darwin.tgz | shasum -a 256 --check
+          tar -xzf codex-darwin.tgz
+          VENDOR="package/vendor/${MACOS_TARGET}"
+          RUNTIME="src-tauri/resources/codex-runtime"
+          MEDIA_RUNTIME="src-tauri/resources/media-runtime"
+          test -x "$VENDOR/bin/codex"
+          test -x "$VENDOR/codex-path/rg"
+          test -x "$VENDOR/bin/codex-code-mode-host"
+          test -x "$VENDOR/codex-resources/zsh/bin/zsh"
+          test -f "$VENDOR/codex-package.json"
 
-      - name: 留存安装包（可在 GitHub 网页下载）
+          rm -rf "$RUNTIME" "$MEDIA_RUNTIME"
+          install -d "$RUNTIME/codex-path" "$RUNTIME/codex-resources/zsh/bin" "$MEDIA_RUNTIME"
+          install -m 755 "$VENDOR/bin/codex" "$RUNTIME/codex"
+          install -m 755 "$VENDOR/bin/codex-code-mode-host" "$RUNTIME/codex-code-mode-host"
+          install -m 755 "$VENDOR/codex-path/rg" "$RUNTIME/codex-path/rg"
+          install -m 755 "$VENDOR/codex-resources/zsh/bin/zsh" "$RUNTIME/codex-resources/zsh/bin/zsh"
+          install -m 644 "$VENDOR/codex-package.json" "$RUNTIME/codex-package.json"
+
+          cat > "$MEDIA_RUNTIME/CAPABILITY_DISABLED.txt" <<'EOF'
+          macOS ARM64 发布门禁构建未捆绑 FFmpeg/ffprobe。
+          原因：当前没有固定版本、固定 SHA-256 的 ARM64 媒体运行时供应链。
+          影响：依赖本地 FFmpeg/ffprobe 的媒体处理能力在本门禁构建中降级为不可用。
+          EOF
+          cat "$MEDIA_RUNTIME/CAPABILITY_DISABLED.txt" >> "$GITHUB_STEP_SUMMARY"
+
+          reject_windows_artifacts() {
+            local root="$1"
+            while IFS= read -r -d '' candidate; do
+              case "${candidate##*/}" in
+                *.exe|*.EXE|*.dll|*.DLL)
+                  echo "Windows artifact is forbidden in macOS staging: $candidate" >&2
+                  exit 1
+                  ;;
+              esac
+              magic="$(od -An -tx1 -N2 "$candidate" | tr -d '[:space:]')"
+              test "$magic" != "4d5a" || { echo "MZ artifact is forbidden in macOS staging: $candidate" >&2; exit 1; }
+            done < <(find "$root" -type f -print0)
+          }
+
+          reject_windows_artifacts "$RUNTIME"
+          reject_windows_artifacts "$MEDIA_RUNTIME"
+          for executable in \
+            "$RUNTIME/codex" \
+            "$RUNTIME/codex-code-mode-host" \
+            "$RUNTIME/codex-path/rg" \
+            "$RUNTIME/codex-resources/zsh/bin/zsh"; do
+            test -x "$executable"
+            file "$executable" | grep -Eq 'Mach-O 64-bit executable arm64|Mach-O universal binary.*arm64'
+          done
+          "$RUNTIME/codex" --version
+          "$RUNTIME/codex-path/rg" --version
+          "$RUNTIME/codex-resources/zsh/bin/zsh" --version
+
+      - name: 生成不含 R2 凭据的运行时配置
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          fs.writeFileSync('src-tauri/resources/r2.config.json', JSON.stringify({
+            accountId: '0f98b7eaabb1ca07dadca32e7e34ddb0',
+            bucket: 'banshan-backup',
+            endpoint: process.env.R2_ENDPOINT,
+            updateManifestUrl: `${process.env.PUBLIC_BASE}/version-mac.json`
+          }, null, 2) + '\n');
+          NODE
+          ! grep -Eq 'accessKeyId|secretAccessKey' src-tauri/resources/r2.config.json
+
+      - name: 导入 Developer ID 证书
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${KEYCHAIN_PASSWORD:-}" || { echo 'Missing required secret: KEYCHAIN_PASSWORD' >&2; exit 1; }
+          KEYCHAIN="$RUNNER_TEMP/bsaigc-signing.keychain-db"
+          CERTIFICATE="$RUNNER_TEMP/apple-certificate.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERTIFICATE" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$APPLE_SIGNING_IDENTITY"
+
+      - name: 运行 macOS 正式发布质量门禁
+        run: |
+          set -euo pipefail
+          pnpm skills:validate
+          pnpm test
+          pnpm check
+          pnpm build
+          pnpm rust:fmt:check
+          pnpm rust:check
+          pnpm rust:clippy
+          pnpm rust:test
+          pnpm test:macos-release-evidence
+          pnpm test:formal-release-evidence
+          pnpm test:release-workflow-policy
+          git diff --check
+
+      - name: 构建、签名并公证 DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -o pipefail
+          pnpm tauri build --target "$MACOS_TARGET" --bundles dmg 2>&1 | tee macos-build.log
+
+      - name: 验证签名、公证、Gatekeeper、启动和产物
+        id: release
+        run: |
+          set -euo pipefail
+          APP="$(find src-tauri/target/$MACOS_TARGET/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG="$(find src-tauri/target/$MACOS_TARGET/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -d "$APP"
+          test -f "$DMG"
+          GATE_CHECK_LOG="$RUNNER_TEMP/macos-gate-checks.log"
+          {
+            echo '== codesign --verify --deep --strict =='
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            echo '== codesign --display --verbose=4 =='
+            codesign --display --verbose=4 "$APP"
+            echo '== spctl app execute =='
+            spctl --assess --type execute --verbose=2 "$APP"
+            echo '== spctl DMG open =='
+            spctl --assess --type open --verbose=2 "$DMG"
+            echo '== stapler app validate =='
+            xcrun stapler validate "$APP"
+            echo '== stapler DMG validate =='
+            xcrun stapler validate "$DMG"
+          } >"$GATE_CHECK_LOG" 2>&1
+          cp "$GATE_CHECK_LOG" macos-gate-checks.log
+          APP_CODEX_RUNTIME="$APP/Contents/Resources/codex-runtime"
+          APP_MEDIA_RUNTIME="$APP/Contents/Resources/media-runtime"
+          test -x "$APP_CODEX_RUNTIME/codex"
+          test -x "$APP_CODEX_RUNTIME/codex-code-mode-host"
+          test -x "$APP_CODEX_RUNTIME/codex-path/rg"
+          test -x "$APP_CODEX_RUNTIME/codex-resources/zsh/bin/zsh"
+          test -f "$APP_CODEX_RUNTIME/codex-package.json"
+          test -f "$APP_MEDIA_RUNTIME/CAPABILITY_DISABLED.txt"
+          while IFS= read -r -d '' candidate; do
+            case "${candidate##*/}" in
+              *.exe|*.EXE|*.dll|*.DLL)
+                echo "Windows artifact leaked into macOS app: $candidate" >&2
+                exit 1
+                ;;
+            esac
+            magic="$(od -An -tx1 -N2 "$candidate" | tr -d '[:space:]')"
+            test "$magic" != "4d5a" || { echo "MZ artifact leaked into macOS app: $candidate" >&2; exit 1; }
+          done < <(find "$APP_CODEX_RUNTIME" "$APP_MEDIA_RUNTIME" -type f -print0)
+          "$APP_CODEX_RUNTIME/codex" --version
+          "$APP_CODEX_RUNTIME/codex-path/rg" --version
+          "$APP_CODEX_RUNTIME/codex-resources/zsh/bin/zsh" --version
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          "$APP/Contents/MacOS/$EXECUTABLE" >"$RUNNER_TEMP/macos-smoke.log" 2>&1 &
+          PID=$!
+          sleep 12
+          kill -0 "$PID"
+          printf 'startup smoke passed: pid=%s durationSeconds=12\n' "$PID" >> "$RUNNER_TEMP/macos-smoke.log"
+          kill "$PID"
+          wait "$PID" || true
+          VERSION="$(node -p "require('./package.json').version")"
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+          NAME="huabang-business-system-${VERSION}-${MACOS_TARGET}-${SHORT_SHA}.dmg"
+          SMOKE_LOG="macos-smoke.log"
+          cp "$DMG" "$NAME"
+          cp "$RUNNER_TEMP/macos-smoke.log" "$SMOKE_LOG"
+          shasum -a 256 "$NAME" > "$NAME.sha256"
+          SHA256="$(awk '{print $1}' "$NAME.sha256")"
+          SIZE="$(stat -f '%z' "$NAME")"
+          CODEX_VERSION="$($APP/Contents/Resources/codex-runtime/codex --version | head -n 1)"
+          APP_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+          CREATED_AT_UTC="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          export VERSION NAME SHA256 SIZE CODEX_VERSION APP_BUNDLE_ID CREATED_AT_UTC SMOKE_LOG
+          node - <<'NODE'
+          const crypto = require('crypto');
+          const fs = require('fs');
+          const sha256 = (path) => crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex');
+          const record = (path) => ({ name: path, sizeBytes: fs.statSync(path).size, sha256: sha256(path) });
+          const smokeLog = record(process.env.SMOKE_LOG);
+          const buildLog = record('macos-build.log');
+          const gateChecksLog = record('macos-gate-checks.log');
+          const dmg = { name: process.env.NAME, sizeBytes: Number(process.env.SIZE), sha256: process.env.SHA256 };
+          const evidenceManifest = {
+            schemaVersion: 1,
+            artifactKind: 'macos-release-gate-evidence',
+            distributionAllowed: false,
+            factDate: process.env.CREATED_AT_UTC.slice(0, 10),
+            status: 'passed',
+            product: require('./src-tauri/tauri.conf.json').productName,
+            version: process.env.VERSION,
+            gitCommit: process.env.GITHUB_SHA,
+            platform: 'macos',
+            target: process.env.MACOS_TARGET,
+            appBundleId: process.env.APP_BUNDLE_ID,
+            dmg,
+            gates: {
+              codesign: 'passed',
+              notarization: 'passed',
+              gatekeeper: 'passed',
+              appStapler: 'passed',
+              dmgStapler: 'passed',
+              sidecar: {
+                status: 'passed',
+                executable: true,
+                version: process.env.CODEX_VERSION
+              },
+              startupSmoke: {
+                status: 'passed',
+                durationSeconds: 12,
+                log: smokeLog
+              }
+            },
+            evidence: { buildLog, gateChecksLog },
+            workflow: { runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, ref: process.env.GITHUB_REF },
+            checksumFile: 'SHA256SUMS-macos.txt',
+            files: [
+              dmg,
+              record(`${process.env.NAME}.sha256`),
+              smokeLog,
+              buildLog,
+              gateChecksLog
+            ],
+            createdAtUtc: process.env.CREATED_AT_UTC
+          };
+          fs.writeFileSync('macos-release-manifest.json', JSON.stringify(evidenceManifest, null, 2) + '\n');
+          NODE
+          shasum -a 256 "$NAME" "$NAME.sha256" macos-release-manifest.json "$SMOKE_LOG" macos-build.log macos-gate-checks.log > SHA256SUMS-macos.txt
+          shasum -a 256 --check SHA256SUMS-macos.txt
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: 校验 macOS 正式发布门禁证据链
+        run: pnpm verify:macos-release-evidence
+
+      - name: 留存禁止分发的 macOS 门禁证据
         uses: actions/upload-artifact@v4
         with:
-          name: banshan-workbench-mac
-          path: src-tauri/target/release/bundle/dmg/*.dmg
+          name: huabang-business-system-${{ steps.release.outputs.version }}-${{ env.MACOS_TARGET }}-${{ github.sha }}-release-gate-evidence
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ${{ steps.release.outputs.name }}
+            ${{ steps.release.outputs.name }}.sha256
+            macos-smoke.log
+            macos-build.log
+            macos-gate-checks.log
+            macos-release-manifest.json
+            SHA256SUMS-macos.txt

@@ -358,13 +358,19 @@ impl BackendHost {
 
     pub fn resolve_approval(
         &self,
+        resolved_by: &str,
         payload: &ResolveApprovalPayload,
     ) -> Result<ApprovalRecord, HostError> {
+        if resolved_by.trim().is_empty() {
+            return Err(HostError::validation(
+                "approval resolver identity must not be empty",
+            ));
+        }
         let connection = self
             .connection
             .lock()
             .map_err(|_| HostError::internal("SQLite host lock is poisoned"))?;
-        security::resolve(&connection, "local-operator", payload)
+        security::resolve(&connection, resolved_by, payload)
     }
 }
 
